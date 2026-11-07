@@ -603,6 +603,62 @@ story("ctx.ui renders the app's components in a contribution, a host menu and a 
 })
 
 story(
+  "a plugin that fills session.permission.actions replaces the dock's buttons and nothing else",
+  async ({ page }) => {
+    const result = await page.evaluate(async (fixture) => {
+      const { mountPermissionDock, until, Slot } = await import(fixture)
+
+      const text = (value: string) => () => Object.assign(document.createElement("p"), { textContent: value })
+
+      const plain = mountPermissionDock({
+        definitions: [{ id: "idle", windowEntry: async () => ({ default: () => {} }) }],
+      })
+      await until(() => !!plain.container.querySelector("[data-slot='permission-footer-actions'] button"))
+      const unclaimed = [...plain.container.querySelectorAll("[data-slot='permission-footer-actions'] button")]
+      unclaimed
+        .find((button) => button.textContent === "Allow once")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+      const fallback = { buttons: unclaimed.map((button) => button.textContent), decided: [...plain.decided] }
+      plain.unmount()
+
+      const claimed = mountPermissionDock({
+        definitions: [
+          {
+            id: "fixture",
+            windowEntry: async () => ({
+              default: (ctx: Context) => {
+                ctx.add(Slot, {
+                  at: "session.permission.actions",
+                  render: (input: { readonly request: { readonly id: string } }) =>
+                    text(`Plugin actions ${input.request.id}`)(),
+                })
+              },
+            }),
+          },
+        ],
+      })
+
+      await until(() => !!claimed.container.textContent?.includes("Plugin actions per_dock"))
+      const replaced = {
+        buttons: claimed.container.querySelectorAll("[data-slot='permission-footer-actions'] button").length,
+        text: claimed.container.textContent,
+        decided: [...claimed.decided],
+      }
+      claimed.unmount()
+
+      return { fallback, replaced }
+    }, fixture)
+
+    expect(result.fallback).toEqual({ buttons: ["Deny", "Allow always", "Allow once"], decided: ["once"] })
+    expect(result.replaced.buttons).toBe(0)
+    expect(result.replaced.text).toContain("Plugin actions per_dock")
+    expect(result.replaced.text).not.toContain("Allow once")
+    expect(result.replaced.text).toContain("echo hello")
+    expect(result.replaced.decided).toEqual([])
+  },
+)
+
+story(
   "routing A, B, then A again: a kept session stays A, the same screen follows the route, and no render remounts",
   async ({ page }) => {
     const result = await page.evaluate(async (fixture) => {

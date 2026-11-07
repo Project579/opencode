@@ -1,9 +1,11 @@
 import { Option, Schema } from "effect"
 import { For, Show } from "solid-js"
 import type { PermissionRequest } from "@opencode/client/promise"
+import type { MountedSession } from "@opencode/plugin/gui"
 import { Button } from "@opencode/ui/button"
 import { DockPrompt } from "@opencode/session-ui/dock-prompt"
 import { Icon } from "@opencode/ui/icon"
+import { PluginSlot } from "@/runtime/plugin/render"
 import { useLanguage } from "@/runtime/i18n/language"
 
 const decodeToolInput = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown))
@@ -12,6 +14,8 @@ const isString = Schema.is(Schema.String)
 
 export function SessionPermissionDock(props: {
   request: PermissionRequest
+  /** The routed session, for plugins that fill `session.permission.actions`; stories mount the dock without one. */
+  session?: MountedSession
   responding: boolean
   onDecide: (response: "once" | "always" | "reject") => void
 }) {
@@ -34,6 +38,20 @@ export function SessionPermissionDock(props: {
         Object.entries(value).map(([key, item]) => `${key}: ${isString(item) ? item : JSON.stringify(item)}`),
     })
 
+  const buttons = () => (
+    <>
+      <Button variant="ghost" size="normal" onClick={() => props.onDecide("reject")} disabled={props.responding}>
+        {language.t("ui.permission.deny")}
+      </Button>
+      <Button variant="neutral" size="normal" onClick={() => props.onDecide("always")} disabled={props.responding}>
+        {language.t("ui.permission.allowAlways")}
+      </Button>
+      <Button variant="submit" size="normal" onClick={() => props.onDecide("once")} disabled={props.responding}>
+        {language.t("ui.permission.allowOnce")}
+      </Button>
+    </>
+  )
+
   return (
     <DockPrompt
       kind="permission"
@@ -49,20 +67,22 @@ export function SessionPermissionDock(props: {
         <>
           <div />
           <div data-slot="permission-footer-actions">
-            <Button variant="ghost" size="normal" onClick={() => props.onDecide("reject")} disabled={props.responding}>
-              {language.t("ui.permission.deny")}
-            </Button>
-            <Button
-              variant="neutral"
-              size="normal"
-              onClick={() => props.onDecide("always")}
-              disabled={props.responding}
-            >
-              {language.t("ui.permission.allowAlways")}
-            </Button>
-            <Button variant="submit" size="normal" onClick={() => props.onDecide("once")} disabled={props.responding}>
-              {language.t("ui.permission.allowOnce")}
-            </Button>
+            <Show when={props.session} fallback={buttons()}>
+              {(session) => (
+                <PluginSlot
+                  at="session.permission.actions"
+                  fallback={buttons()}
+                  input={{
+                    get session() {
+                      return session()
+                    },
+                    get request() {
+                      return props.request
+                    },
+                  }}
+                />
+              )}
+            </Show>
           </div>
         </>
       }

@@ -1,4 +1,5 @@
 import type { JSX } from "solid-js"
+import type { PermissionRequest } from "@opencode/client/promise"
 import type { IconName } from "./icon-name.js"
 import { Registry } from "./core.js"
 import type { SessionRef, MountedSession, SessionScreen } from "./host-apis.js"
@@ -896,6 +897,18 @@ export interface SlotMap {
     readonly screen: SessionScreen
     /** The routed session; a new object when another session is routed. */
     readonly session: MountedSession
+  }
+  /**
+   * The action buttons of the permission prompt above the composer. Content here replaces the built-in Deny, Always
+   * allow and Allow once buttons; without any, the host shows its buttons. The request's description, arguments and
+   * resources stay visible. The host does not answer for you: send the reply with `ctx.client.permission.reply`, and
+   * the prompt closes when the server reports the request answered.
+   */
+  readonly "session.permission.actions": {
+    /** The session the request belongs to; a new object when another session is routed. */
+    readonly session: MountedSession
+    /** The pending permission request: what is asked (`action`, `resources`) and its `id` for the reply. */
+    readonly request: PermissionRequest
   }
 }
 
