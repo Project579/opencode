@@ -117,7 +117,6 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
     stage: "permission" as PermissionStage,
   })
   const pathFormatter = usePathFormatter()
-  const session = createMemo(() => data.session.get(props.request.sessionID))
 
   const source = createMemo(() => {
     const tool = props.request.source
@@ -246,11 +245,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                   return
                 }
                 if (option === "reject") {
-                  if (session()?.parentID) {
-                    setStore("stage", "reject")
-                    return
-                  }
-                  reply("reject")
+                  setStore("stage", "reject")
                   return
                 }
                 reply("once")

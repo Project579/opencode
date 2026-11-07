@@ -1,4 +1,5 @@
 import { testRender } from "@opentui/solid"
+import type { JSX } from "solid-js"
 import type { AgentInfo, ModelInfo, SessionInfo } from "@opencode/client"
 import path from "node:path"
 import { ConfigProvider } from "../../src/config"
@@ -27,6 +28,8 @@ export async function renderLocal(
     preferences?: Partial<ModelPreference>
     args?: Args
     fetch?: FetchHandler
+    /** Rendered inside the providers beside the probe, for a component that needs them. */
+    view?: () => JSX.Element
   } = {},
 ) {
   const temporary = await tmpdir()
@@ -72,6 +75,7 @@ export async function renderLocal(
                             <LocalProvider>
                               <DialogProvider>
                                 <Probe />
+                                {input.view?.()}
                               </DialogProvider>
                             </LocalProvider>
                           </PermissionProvider>
