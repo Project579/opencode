@@ -284,6 +284,45 @@ test("shows a pending permission dock", async ({ page }) => {
   await expect(page.locator('[data-component="composer"]')).toBeVisible()
 })
 
+for (const [name, type, expected] of [
+  ["a reason", "use a PR", { decision: "reject", message: "use a PR" }],
+  ["no reason", undefined, { decision: "reject" }],
+] as const) {
+  test(`denying a permission sends ${name}`, async ({ page }) => {
+    const replies: { sessionID: string; permissionID: string; body: unknown }[] = []
+    await mockServer(page, {
+      onPermissionReply: (reply) => replies.push(reply),
+      sessionPermissions: {
+        [sessionID]: [
+          {
+            id: "permission-request",
+            sessionID,
+            permission: "shell",
+            patterns: ["git push"],
+            metadata: {},
+            always: [],
+          },
+        ],
+      },
+    })
+
+    await page.goto(sessionHref(sessionID))
+    await expectSessionTitle(page, title)
+
+    const permission = page.locator('[data-component="dock-prompt"][data-kind="permission"]')
+    await permission.getByRole("button", { name: "Deny" }).click()
+    // Deny only asks for the optional reason; nothing is sent yet.
+    expect(replies).toEqual([])
+    const reason = permission.getByRole("textbox")
+    await expect(reason).toBeFocused()
+    if (type) await reason.fill(type)
+    await reason.press("Enter")
+
+    await expect(permission).toHaveCount(0)
+    expect(replies).toEqual([{ sessionID, permissionID: "permission-request", body: expected }])
+  })
+}
+
 test("sends one permission reply and closes the dock when it lands, before permission.replied", async ({ page }) => {
   await mockServer(page, {
     sessionPermissions: {

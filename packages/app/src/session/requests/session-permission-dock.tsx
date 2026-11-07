@@ -1,9 +1,10 @@
 import { Option, Schema } from "effect"
-import { For, Show } from "solid-js"
+import { createSignal, For, Show } from "solid-js"
 import type { PermissionRequest } from "@opencode/client/promise"
 import { Button } from "@opencode/ui/button"
 import { DockPrompt } from "@opencode/session-ui/dock-prompt"
 import { Icon } from "@opencode/ui/icon"
+import { TextField } from "@opencode/ui/text-field"
 import { useLanguage } from "@/runtime/i18n/language"
 
 const decodeToolInput = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown))
@@ -13,9 +14,11 @@ const isString = Schema.is(Schema.String)
 export function SessionPermissionDock(props: {
   request: PermissionRequest
   responding: boolean
-  onDecide: (response: "once" | "always" | "reject") => void
+  onDecide: (response: "once" | "always" | "reject", message?: string) => void
 }) {
   const language = useLanguage()
+  // Deny first asks for an optional reason; Enter or Deny sends it, an empty reason sends none.
+  const [reason, setReason] = createSignal<string>()
 
   const toolDescription = () => {
     const key = `settings.permissions.tool.${props.request.action}.description`
@@ -49,20 +52,44 @@ export function SessionPermissionDock(props: {
         <>
           <div />
           <div data-slot="permission-footer-actions">
-            <Button variant="ghost" size="normal" onClick={() => props.onDecide("reject")} disabled={props.responding}>
-              {language.t("ui.permission.deny")}
-            </Button>
-            <Button
-              variant="neutral"
-              size="normal"
-              onClick={() => props.onDecide("always")}
-              disabled={props.responding}
+            <Show
+              when={reason() !== undefined}
+              fallback={
+                <>
+                  <Button variant="ghost" size="normal" onClick={() => setReason("")} disabled={props.responding}>
+                    {language.t("ui.permission.deny")}
+                  </Button>
+                  <Button
+                    variant="neutral"
+                    size="normal"
+                    onClick={() => props.onDecide("always")}
+                    disabled={props.responding}
+                  >
+                    {language.t("ui.permission.allowAlways")}
+                  </Button>
+                  <Button
+                    variant="submit"
+                    size="normal"
+                    onClick={() => props.onDecide("once")}
+                    disabled={props.responding}
+                  >
+                    {language.t("ui.permission.allowOnce")}
+                  </Button>
+                </>
+              }
             >
-              {language.t("ui.permission.allowAlways")}
-            </Button>
-            <Button variant="submit" size="normal" onClick={() => props.onDecide("once")} disabled={props.responding}>
-              {language.t("ui.permission.allowOnce")}
-            </Button>
+              <Button variant="ghost" size="normal" onClick={() => setReason(undefined)} disabled={props.responding}>
+                {language.t("ui.common.cancel")}
+              </Button>
+              <Button
+                variant="submit"
+                size="normal"
+                onClick={() => props.onDecide("reject", reason())}
+                disabled={props.responding}
+              >
+                {language.t("ui.permission.deny")}
+              </Button>
+            </Show>
           </div>
         </>
       }
@@ -90,6 +117,26 @@ export function SessionPermissionDock(props: {
           <div data-slot="permission-input" data-scrollable>
             <For each={input()}>{(line) => <code class="text-text-weak break-all">{line}</code>}</For>
           </div>
+        </div>
+      </Show>
+
+      <Show when={reason() !== undefined}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <TextField
+            hideLabel
+            label={language.t("ui.permission.denyReason")}
+            placeholder={language.t("ui.permission.denyReason")}
+            value={reason()}
+            onChange={setReason}
+            disabled={props.responding}
+            ref={(el: HTMLInputElement) => setTimeout(() => el.focus())}
+            onKeyDown={(event: KeyboardEvent) => {
+              if (event.isComposing) return
+              if (event.key === "Enter") props.onDecide("reject", reason())
+              if (event.key === "Escape") setReason(undefined)
+            }}
+          />
         </div>
       </Show>
 

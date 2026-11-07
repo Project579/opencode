@@ -18,7 +18,13 @@ export type PermissionReplyState =
   | { readonly status: "replied" }
 
 export type PermissionReplyEvent =
-  | { readonly type: "decide"; readonly sessionID: string; readonly decision: PermissionDecision }
+  | {
+      readonly type: "decide"
+      readonly sessionID: string
+      readonly decision: PermissionDecision
+      // Why the user rejected; the model is told and continues. Empty or blank sends no message.
+      readonly message?: string
+    }
   | { readonly type: "reply.succeeded"; readonly attempt: number }
   | { readonly type: "reply.failed"; readonly attempt: number; readonly error: string }
   | { readonly type: "reply.timed-out"; readonly attempt: number }
@@ -32,6 +38,7 @@ export type PermissionReplyEffect =
       readonly attempt: number
       readonly sessionID: string
       readonly decision: PermissionDecision
+      readonly message?: string
       readonly timeoutMs: number
     }
   | { readonly type: "abort" }
@@ -56,6 +63,7 @@ export function transitionPermissionReply(
   if (event.type === "decide") {
     if (state.status !== "idle") return unchanged(state)
     const attempt = state.attempt + 1
+    const message = event.message?.trim()
 
     return {
       state: { status: "responding", attempt, sessionID: event.sessionID, decision: event.decision },
@@ -65,6 +73,7 @@ export function transitionPermissionReply(
           attempt,
           sessionID: event.sessionID,
           decision: event.decision,
+          ...(message ? { message } : {}),
           timeoutMs: PERMISSION_REPLY_TIMEOUT_MS,
         },
       ],

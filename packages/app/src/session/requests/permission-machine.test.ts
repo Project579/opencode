@@ -51,6 +51,47 @@ describe("transitionPermissionReply", () => {
     expect(again.effects).toEqual([])
   })
 
+  test("a reject reason travels with the reply", () => {
+    const result = transitionPermissionReply(INITIAL_PERMISSION_REPLY_STATE, {
+      type: "decide",
+      sessionID: "ses_1",
+      decision: "reject",
+      message: "use a PR",
+    })
+
+    expect(result.state).toEqual({ status: "responding", attempt: 1, sessionID: "ses_1", decision: "reject" })
+    expect(result.effects).toEqual([
+      {
+        type: "reply",
+        attempt: 1,
+        sessionID: "ses_1",
+        decision: "reject",
+        message: "use a PR",
+        timeoutMs: PERMISSION_REPLY_TIMEOUT_MS,
+      },
+    ])
+  })
+
+  test("an empty or blank reason sends the reply without a message", () => {
+    for (const message of [undefined, "", "   "]) {
+      const [effect] = transitionPermissionReply(INITIAL_PERMISSION_REPLY_STATE, {
+        type: "decide",
+        sessionID: "ses_1",
+        decision: "reject",
+        message,
+      }).effects
+
+      expect(effect).toEqual({
+        type: "reply",
+        attempt: 1,
+        sessionID: "ses_1",
+        decision: "reject",
+        timeoutMs: PERMISSION_REPLY_TIMEOUT_MS,
+      })
+      expect(effect).not.toHaveProperty("message")
+    }
+  })
+
   test("a second click while the reply is in flight sends nothing", () => {
     const state = responding(1)
     const result = transitionPermissionReply(state, decide("always"))

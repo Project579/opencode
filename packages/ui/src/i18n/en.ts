@@ -273,6 +273,7 @@ const source = {
   "ui.common.moreCount.other": "+{{count}} more",
 
   "ui.permission.deny": "Deny",
+  "ui.permission.denyReason": "Tell OpenCode what to do instead (optional)",
   "ui.permission.allowAlways": "Allow always",
   "ui.permission.allowOnce": "Allow once",
 
