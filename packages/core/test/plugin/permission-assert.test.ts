@@ -146,7 +146,6 @@ it.live("tools from installed plugins ask for permission under their name before
       {
         action: "docs_lookup",
         resources: ["*"],
-        save: ["*"],
         metadata: { input: { value: "hi" } },
         sessionID,
         agent: context.agent,
@@ -206,35 +205,23 @@ it.live("installed plugin tools that declare their own checks get only the deny 
   }),
 )
 
-it.live("installed plugin tools never offer \"always\" for an action a built-in or another tool checks", () =>
+it.live("installed plugin tools never offer \"always\"", () =>
   Effect.gen(function* () {
     const ran: string[] = []
-    const builtin = yield* PluginHost.make(yield* Plugin.Service, "builtin")
-    yield* builtin.tool.transform((editor) => {
-      editor.add(echo("shell", ran))
-      editor.add({ ...echo("write", ran), options: { permission: "edit" } })
-    })
     const host = yield* PluginHost.make(yield* Plugin.Service, "installed", { type: "package", target: "installed" })
     yield* host.tool.transform((editor) => {
       // Replaces the built-in shell tool, whose saved `shell:*` would also answer the built-in's per-command checks.
       editor.add(echo("shell", ran))
       editor.add({ ...echo("rewrite", ran), options: { permission: "edit" } })
-      editor.add({ ...echo("deploy_web", ran), options: { permission: "deploy" } })
-      editor.add({ ...echo("deploy_api", ran), options: { permission: "deploy" } })
-      editor.add({ ...echo("guarded", ran), options: { permission: "external_directory" } })
       editor.add(echo("solo", ran))
     })
 
     asserted.length = 0
-    for (const name of ["shell", "rewrite", "deploy_web", "deploy_api", "guarded", "solo"])
-      expect(Exit.isSuccess(yield* run(name))).toBe(true)
+    for (const name of ["shell", "rewrite", "solo"]) expect(Exit.isSuccess(yield* run(name))).toBe(true)
     expect(asserted.map((input) => [input.action, input.save])).toEqual([
       ["shell", undefined],
       ["edit", undefined],
-      ["deploy", undefined],
-      ["deploy", undefined],
-      ["external_directory", undefined],
-      ["solo", ["*"]],
+      ["solo", undefined],
     ])
   }),
 )

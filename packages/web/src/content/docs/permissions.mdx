@@ -174,7 +174,7 @@ OpenCode checks your rule for an MCP or plugin tool before each call, as one req
 
 A plugin tool that checks its own resources declares it with the experimental `experimental.permission: { self: true }` tool option. OpenCode then applies your resource patterns through the plugin's own requests and doesn't ask first; it only blocks the call when the tool's action is denied outright, such as `"mytool": "deny"`, or by managed policy.
 
-**Always allow** isn't offered for a plugin tool whose action is also checked by a built-in tool (such as `shell`, `edit` or `external_directory`) or by another tool, because the saved rule would also approve those other checks.
+**Always allow** isn't offered for these plugin tool checks: `ask` prompts once per call and nothing is saved. OpenCode can't tell which inputs an approval should cover, and a saved rule for the whole tool would also approve finer checks under the same name. A plugin that wants a meaningful "always" declares `self` and asks with its own `resources` and `save`.
 
 ---
 
