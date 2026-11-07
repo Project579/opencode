@@ -1593,6 +1593,22 @@
     }
   }
 
+  [data-slot="permission-always"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    margin-bottom: 16px;
+
+    code {
+      font-family: var(--v2-font-family-code);
+      font-size: 13px;
+      font-weight: 440;
+      line-height: var(--line-height-base);
+      letter-spacing: -0.04px;
+    }
+  }
+
   [data-slot="permission-patterns"] {
     display: flex;
     flex-direction: column;

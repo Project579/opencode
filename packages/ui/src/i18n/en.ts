@@ -274,6 +274,7 @@ const source = {
 
   "ui.permission.deny": "Deny",
   "ui.permission.allowAlways": "Allow always",
+  "ui.permission.alwaysAllows": "Always allows:",
   "ui.permission.allowOnce": "Allow once",
 
   "ui.message.expand": "Expand message",

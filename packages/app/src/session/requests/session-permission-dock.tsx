@@ -52,14 +52,16 @@ export function SessionPermissionDock(props: {
             <Button variant="ghost" size="normal" onClick={() => props.onDecide("reject")} disabled={props.responding}>
               {language.t("ui.permission.deny")}
             </Button>
-            <Button
-              variant="neutral"
-              size="normal"
-              onClick={() => props.onDecide("always")}
-              disabled={props.responding}
-            >
-              {language.t("ui.permission.allowAlways")}
-            </Button>
+            <Show when={props.request.save?.length}>
+              <Button
+                variant="neutral"
+                size="normal"
+                onClick={() => props.onDecide("always")}
+                disabled={props.responding}
+              >
+                {language.t("ui.permission.allowAlways")}
+              </Button>
+            </Show>
             <Button variant="submit" size="normal" onClick={() => props.onDecide("once")} disabled={props.responding}>
               {language.t("ui.permission.allowOnce")}
             </Button>
@@ -100,6 +102,16 @@ export function SessionPermissionDock(props: {
             <For each={props.request.resources}>
               {(pattern) => <code class="text-text-base break-all">{pattern}</code>}
             </For>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={props.request.save?.length}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <div data-slot="permission-always">
+            <span data-slot="permission-hint">{language.t("ui.permission.alwaysAllows")}</span>
+            <For each={props.request.save}>{(pattern) => <code class="text-text-base break-all">{pattern}</code>}</For>
           </div>
         </div>
       </Show>

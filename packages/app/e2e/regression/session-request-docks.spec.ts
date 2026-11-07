@@ -270,7 +270,9 @@ test("shows a pending permission dock", async ({ page }) => {
   await expect(permission).toBeVisible()
   await expect(permission.getByText("git status")).toBeVisible()
   await expect(permission.getByText("git diff")).toBeVisible()
-  await expect(permission.locator('[data-slot="permission-footer-actions"] button')).toHaveCount(3)
+  // Nothing would be saved, so there is no "Allow always" to offer
+  await expect(permission.locator('[data-slot="permission-footer-actions"] button')).toHaveCount(2)
+  await expect(permission.getByRole("button", { name: "Allow always" })).toHaveCount(0)
   await expect(page.locator('[data-component="composer"]')).toHaveCount(0)
 
   const reply = page.waitForResponse((response) => response.request().method() === "POST")
@@ -284,6 +286,40 @@ test("shows a pending permission dock", async ({ page }) => {
   await expect(page.locator('[data-component="composer"]')).toBeVisible()
 })
 
+test("shows what Allow always saves and sends it", async ({ page }) => {
+  const replies: { sessionID: string; permissionID: string; body: unknown }[] = []
+  await mockServer(page, {
+    onPermissionReply: (reply) => replies.push(reply),
+    sessionPermissions: {
+      [sessionID]: [
+        {
+          id: "permission-request",
+          sessionID,
+          action: "shell",
+          resources: ["git status --short"],
+          save: ["git status *", "git diff *"],
+          metadata: {},
+        },
+      ],
+    },
+  })
+
+  await page.goto(sessionHref(sessionID))
+  await expectSessionTitle(page, title)
+
+  const permission = page.locator('[data-component="dock-prompt"][data-kind="permission"]')
+  const saved = permission.locator('[data-slot="permission-always"]')
+  await expect(saved).toContainText("Always allows:")
+  await expect(saved.getByText("git status *", { exact: true })).toBeVisible()
+  await expect(saved.getByText("git diff *", { exact: true })).toBeVisible()
+
+  await permission.getByRole("button", { name: "Allow always" }).click()
+  await expect
+    .poll(() => replies)
+    .toEqual([{ sessionID, permissionID: "permission-request", body: { decision: "always" } }])
+  await expect(permission).toHaveCount(0)
+})
+
 test("sends one permission reply and closes the dock when it lands, before permission.replied", async ({ page }) => {
   await mockServer(page, {
     sessionPermissions: {
@@ -294,7 +330,7 @@ test("sends one permission reply and closes the dock when it lands, before permi
           permission: "shell",
           patterns: ["git status"],
           metadata: {},
-          always: [],
+          always: ["git status *"],
         },
       ],
     },
