@@ -899,15 +899,24 @@ export interface SlotMap {
     readonly session: MountedSession
   }
   /**
-   * The action buttons of the permission prompt above the composer. Content here replaces the built-in Deny, Always
-   * allow and Allow once buttons; without any, the host shows its buttons. The request's description, arguments and
-   * resources stay visible. The host does not answer for you: send the reply with `ctx.client.permission.reply`, and
-   * the prompt closes when the server reports the request answered.
+   * Experimental: may change without compatibility guarantees. The action buttons of the permission prompt above the
+   * composer. Content here replaces the built-in Deny, Allow always and Allow once buttons; without any, the host shows
+   * its buttons. The request's description, arguments and resources stay visible. The host does not answer for you:
+   * send the reply with `ctx.client.permission.reply`, and the prompt closes when the server reports the request
+   * answered.
    */
-  readonly "session.permission.actions": {
-    /** The session the request belongs to; a new object when another session is routed. */
+  readonly "experimental.session.permission.actions": {
+    /** The owning session screen; always present. */
+    readonly screen: SessionScreen
+    /**
+     * The routed session; a new object when another session is routed. The request may come from one of its subagent
+     * sessions, so reply with `request.sessionID`, not `session.id`.
+     */
     readonly session: MountedSession
-    /** The pending permission request: what is asked (`action`, `resources`) and its `id` for the reply. */
+    /**
+     * The pending permission request: what is asked (`action`, `resources`), its `id` and the `sessionID` of the
+     * session that asked, which is the one to reply to.
+     */
     readonly request: PermissionRequest
   }
 }

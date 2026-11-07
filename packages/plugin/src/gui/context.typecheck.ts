@@ -116,7 +116,9 @@ equal<SlotMap["session.header"]["screen"], SessionScreen>(true)
 
 equal<SlotMap["session.panel.end"]["screen"], SessionScreen>(true)
 
-equal<SlotMap["session.permission.actions"]["session"], MountedSession>(true)
+equal<SlotMap["experimental.session.permission.actions"]["screen"], SessionScreen>(true)
+
+equal<SlotMap["experimental.session.permission.actions"]["session"], MountedSession>(true)
 
 equal<SlotMap["window.bottom"]["screen"], never>(true)
 

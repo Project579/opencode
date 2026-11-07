@@ -603,7 +603,7 @@ story("ctx.ui renders the app's components in a contribution, a host menu and a 
 })
 
 story(
-  "a plugin that fills session.permission.actions replaces the dock's buttons and nothing else",
+  "a plugin that fills experimental.session.permission.actions replaces the dock's buttons and nothing else",
   async ({ page }) => {
     const result = await page.evaluate(async (fixture) => {
       const { mountPermissionDock, until, Slot } = await import(fixture)
@@ -628,9 +628,15 @@ story(
             windowEntry: async () => ({
               default: (ctx: Context) => {
                 ctx.add(Slot, {
-                  at: "session.permission.actions",
-                  render: (input: { readonly request: { readonly id: string } }) =>
-                    text(`Plugin actions ${input.request.id}`)(),
+                  at: "experimental.session.permission.actions",
+                  render: (input: {
+                    readonly screen?: object
+                    readonly session: { readonly id: string }
+                    readonly request: { readonly id: string; readonly sessionID: string }
+                  }) =>
+                    text(
+                      `Plugin actions ${input.request.id} in ${input.session.id} for ${input.request.sessionID} ${input.screen ? "with" : "without"} screen`,
+                    )(),
                 })
               },
             }),
@@ -651,7 +657,7 @@ story(
 
     expect(result.fallback).toEqual({ buttons: ["Deny", "Allow always", "Allow once"], decided: ["once"] })
     expect(result.replaced.buttons).toBe(0)
-    expect(result.replaced.text).toContain("Plugin actions per_dock")
+    expect(result.replaced.text).toContain("Plugin actions per_dock in a for child with screen")
     expect(result.replaced.text).not.toContain("Allow once")
     expect(result.replaced.text).toContain("echo hello")
     expect(result.replaced.decided).toEqual([])

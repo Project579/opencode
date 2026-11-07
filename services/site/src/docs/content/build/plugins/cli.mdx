@@ -541,7 +541,8 @@ context.ui.slot({ replace: "home.footer", render: () => <text>New footer</text> 
 `experimental.session.permission.options` is the choices row of a permission prompt (experimental: may change without
 compatibility guarantees). It receives `sessionID` and `requestID`. A `replace` claim swaps the built-in options and
 their keys while the request's header and body stay visible, so the claim owns the keys and answers with
-`context.client.permission.reply`.
+`context.client.permission.reply`. Keys the claim does not bind reach the session and app bindings: Escape and Ctrl+C
+no longer reject the request.
 
 ```tsx
 context.ui.slot({

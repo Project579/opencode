@@ -566,7 +566,12 @@ export function ActiveSessionComposerRegion(props: {
   return (
     <SessionComposerRegion
       controller={props.model.region}
-      session={props.view()}
+      context={{
+        get session() {
+          return props.view()
+        },
+        screen: props.screen,
+      }}
       subagent={
         <Show when={props.session.data.info()}>
           {(info) => (

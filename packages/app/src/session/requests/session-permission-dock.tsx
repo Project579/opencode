@@ -1,7 +1,7 @@
 import { Option, Schema } from "effect"
 import { For, Show } from "solid-js"
 import type { PermissionRequest } from "@opencode/client/promise"
-import type { MountedSession } from "@opencode/plugin/gui"
+import type { MountedSession, SessionScreen } from "@opencode/plugin/gui"
 import { Button } from "@opencode/ui/button"
 import { DockPrompt } from "@opencode/session-ui/dock-prompt"
 import { Icon } from "@opencode/ui/icon"
@@ -14,8 +14,8 @@ const isString = Schema.is(Schema.String)
 
 export function SessionPermissionDock(props: {
   request: PermissionRequest
-  /** The routed session, for plugins that fill `session.permission.actions`; stories mount the dock without one. */
-  session?: MountedSession
+  /** The routed session and its screen, for plugins that fill `experimental.session.permission.actions`; stories mount the dock without them. */
+  context?: { readonly session: MountedSession; readonly screen: SessionScreen }
   responding: boolean
   onDecide: (response: "once" | "always" | "reject") => void
 }) {
@@ -67,14 +67,17 @@ export function SessionPermissionDock(props: {
         <>
           <div />
           <div data-slot="permission-footer-actions">
-            <Show when={props.session} fallback={buttons()}>
-              {(session) => (
+            <Show when={props.context} fallback={buttons()}>
+              {(context) => (
                 <PluginSlot
-                  at="session.permission.actions"
+                  at="experimental.session.permission.actions"
                   fallback={buttons()}
                   input={{
+                    get screen() {
+                      return context().screen
+                    },
                     get session() {
-                      return session()
+                      return context().session
                     },
                     get request() {
                       return props.request

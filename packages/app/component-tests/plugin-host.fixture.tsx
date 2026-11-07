@@ -714,7 +714,8 @@ export function mountPermissionDock(input: { definitions: readonly Entry[] }) {
   const decided: string[] = []
   const request = {
     id: "per_dock",
-    sessionID: "a",
+    // A subagent of the routed session "a": the dock shows its subtree's requests.
+    sessionID: "child",
     action: "shell",
     resources: ["echo hello"],
   } satisfies PermissionRequest
@@ -724,6 +725,10 @@ export function mountPermissionDock(input: { definitions: readonly Entry[] }) {
   // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
   const session = value as unknown as MountedSession
 
+  // SAFETY: the test's plugins only check that the screen is present.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
+  const screen = {} as unknown as SessionScreen
+
   function Dock() {
     const host = usePluginHost()
 
@@ -731,7 +736,7 @@ export function mountPermissionDock(input: { definitions: readonly Entry[] }) {
       <Show when={host.ready()}>
         <SessionPermissionDock
           request={request}
-          session={session}
+          context={{ session, screen }}
           responding={false}
           onDecide={(response) => void decided.push(response)}
         />

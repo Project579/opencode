@@ -28,6 +28,12 @@ test("the built-in options keep their fullscreen toggle across the remount it ca
   setup.mockInput.pressKey("f", { ctrl: true })
   await setup.waitForFrame((frame) => frame.includes("fullscreen") && !frame.includes("minimize"))
   expect(setup.requests).toHaveLength(0)
+
+  // The keymap registered again after the remount.
+  setup.mockInput.pressArrow("right")
+  setup.mockInput.pressEnter()
+  await setup.waitFor(() => setup.requests.length === 1)
+  expect(setup.requests).toEqual([{ decision: "reject" }])
 })
 
 test("a replace claim swaps the options and their keys while the request stays visible", async () => {
