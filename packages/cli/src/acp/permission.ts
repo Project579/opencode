@@ -36,11 +36,25 @@ type Input = {
   readonly child?: ACPChild.Session
 }
 
-const options: PermissionOption[] = [
-  { optionId: "once", kind: "allow_once", name: "Allow once" },
-  { optionId: "always", kind: "allow_always", name: "Always allow" },
-  { optionId: "reject", kind: "reject_once", name: "Reject" },
-]
+const ALWAYS_NAME_LIMIT = 80
+
+// "Allow always" saves `save`, so the option names it and is offered only when something would be saved.
+function options(save: ReadonlyArray<string> = []): PermissionOption[] {
+  const name = `Always allow: ${save.join(", ")}`
+  return [
+    { optionId: "once", kind: "allow_once", name: "Allow once" },
+    ...(save.length === 0
+      ? []
+      : [
+          {
+            optionId: "always",
+            kind: "allow_always" as const,
+            name: name.length > ALWAYS_NAME_LIMIT ? `${name.slice(0, ALWAYS_NAME_LIMIT - 1)}…` : name,
+          },
+        ]),
+    { optionId: "reject", kind: "reject_once", name: "Reject" },
+  ]
+}
 
 const decodeFiles = Schema.decodeUnknownOption(Schema.Array(FileDiff.Info))
 
@@ -67,7 +81,7 @@ export const ask = Effect.fnUntraced(function* (input: Input) {
       ...(previews.length > 0 ? { content: previews } : {}),
       ...(input.child ? { _meta: ACPChild.meta(input.child) } : {}),
     },
-    options,
+    options: options(input.event.data.save),
   })
   const selected = result.outcome.outcome === "selected" ? result.outcome.optionId : undefined
   return selected === "once" || selected === "always" ? selected : "reject"

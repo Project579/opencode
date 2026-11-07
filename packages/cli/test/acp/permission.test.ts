@@ -48,6 +48,7 @@ describe("acp permissions over the wire", () => {
           }),
           permissionAsked(sessionID, "perm_always", {
             action: "read",
+            save: ["/workspace/*"],
             metadata: { path: "/workspace/file.ts" },
             source: { type: "tool", messageID: "msg_allow", id: "call_always" },
           }),
@@ -72,7 +73,6 @@ describe("acp permissions over the wire", () => {
       },
       options: [
         { optionId: "once", kind: "allow_once", name: "Allow once" },
-        { optionId: "always", kind: "allow_always", name: "Always allow" },
         { optionId: "reject", kind: "reject_once", name: "Reject" },
       ],
     })
@@ -86,6 +86,11 @@ describe("acp permissions over the wire", () => {
         locations: [{ path: "/workspace/file.ts" }],
         rawInput: { path: "/workspace/file.ts" },
       },
+      options: [
+        { optionId: "once", kind: "allow_once", name: "Allow once" },
+        { optionId: "always", kind: "allow_always", name: "Always allow: /workspace/*" },
+        { optionId: "reject", kind: "reject_once", name: "Reject" },
+      ],
     })
     expect(decisions(acp)).toEqual([
       ["perm_once", "once"],
@@ -94,6 +99,33 @@ describe("acp permissions over the wire", () => {
       ["perm_cancelled", "reject"],
       ["perm_failed", "reject"],
     ])
+  })
+
+  test("offers allow-always only when the request saves patterns, and names them", async () => {
+    const long = Array.from({ length: 12 }, (_, index) => `git subcommand${index} *`)
+    await using acp = await startSession({
+      onPrompt: ({ sessionID, id }) =>
+        turn(
+          sessionID,
+          id,
+          permissionAsked(sessionID, "perm_none", { save: [] }),
+          permissionAsked(sessionID, "perm_one", { save: ["git status *"] }),
+          permissionAsked(sessionID, "perm_many", { save: long }),
+        ),
+      permission: allowOnce,
+    })
+
+    await acp.prompt(acp.sessionId, "hello")
+
+    const names = acp.permissions.map((request) =>
+      request.options.map((option) => (option.kind === "allow_always" ? option.name : option.kind)),
+    )
+    expect(names[0]).toEqual(["allow_once", "reject_once"])
+    expect(names[1]).toEqual(["allow_once", "Always allow: git status *", "reject_once"])
+    const truncated = names[2][1]
+    expect(truncated).toHaveLength(80)
+    expect(truncated.endsWith("…")).toBe(true)
+    expect(truncated.startsWith("Always allow: git subcommand0 *, git subcommand1 *")).toBe(true)
   })
 
   test.each<[string, string, string, (sessionID: string, id: string) => OpenCodeEventEncoded]>([
@@ -305,4 +337,3 @@ function question(sessionID: string, id: string) {
 function decisions(acp: Wire) {
   return acp.server.replies.map((reply) => [reply.requestID, reply.decision])
 }
-
