@@ -518,7 +518,8 @@ context.keymap.layer(() => ({
 ## Slots
 
 Slots insert or replace JSX at `app`, `home.footer`, `home.footer.status`, `prompt.footer`, `prompt.footer.status`,
-`prompt.footer.file`, `session.composer.top`, `sidebar.content`, or `sidebar.footer`.
+`prompt.footer.file`, `session.composer.top`, `sidebar.content`, `sidebar.footer`, or
+`experimental.session.permission.options`.
 
 ```tsx
 return context.ui.slot({
@@ -535,6 +536,18 @@ context.ui.slot({ append: "home.footer", render: () => <text>After footer conten
 context.ui.slot({ before: "home.footer", render: () => <text>Before footer slot</text> })
 context.ui.slot({ after: "home.footer", render: () => <text>After footer slot</text> })
 context.ui.slot({ replace: "home.footer", render: () => <text>New footer</text> })
+```
+
+`experimental.session.permission.options` is the choices row of a permission prompt (experimental: may change without
+compatibility guarantees). It receives `sessionID` and `requestID`. A `replace` claim swaps the built-in options and
+their keys while the request's header and body stay visible, so the claim owns the keys and answers with
+`context.client.permission.reply`.
+
+```tsx
+context.ui.slot({
+  replace: "experimental.session.permission.options",
+  render: ({ sessionID, requestID }) => <PermissionChoices sessionID={sessionID} requestID={requestID} />,
+})
 ```
 
 Use `home.footer.status` to add content to the built-in footer row without replacing it. Status contributions appear

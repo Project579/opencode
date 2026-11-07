@@ -196,6 +196,13 @@ export interface SlotMap {
   readonly "prompt.footer.status": PromptFooterInput
   readonly "prompt.footer.file": PromptFooterInput
   readonly "session.composer.top": { readonly sessionID: string }
+  /**
+   * Experimental: may change without compatibility guarantees. The choices row of a session's permission prompt and
+   * the keys that drive it. The request's header and body stay visible around it. A `replace` claim removes the
+   * built-in options, their hints and their keymap (arrows, Enter, Escape, fullscreen), so the claim owns the keys and
+   * answers through `context.client.permission.reply`.
+   */
+  readonly "experimental.session.permission.options": { readonly sessionID: string; readonly requestID: string }
   readonly "session.panel": PanelInput
   readonly "sidebar.content": { readonly sessionID: string }
   readonly "sidebar.footer": { readonly sessionID: string }

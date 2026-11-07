@@ -1,4 +1,4 @@
-import { createStore } from "solid-js/store"
+import { createStore, type SetStoreFunction } from "solid-js/store"
 import { createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
@@ -16,6 +16,7 @@ import { usePathFormatter } from "../../context/path-format"
 import { SimulationSemantics } from "../../simulation/semantics"
 import { PatchDiff } from "../../component/patch-diff"
 import { useToast } from "../../ui/toast"
+import { Slot } from "../../plugin/render"
 
 type PermissionStage = "permission" | "reject"
 
@@ -240,6 +241,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
               }
               escapeKey="reject"
               fullscreen
+              optionsSlot={{ sessionID: props.request.sessionID, requestID: props.request.id }}
               onSelect={(option) => {
                 if (option === "always") {
                   reply("always")
@@ -404,7 +406,7 @@ function RejectPrompt(props: {
   )
 }
 
-export function SessionQuestion<const T extends Record<string, string>>(props: {
+type QuestionProps<T extends Record<string, string>> = {
   title: string
   semanticLabel?: string
   instance: string
@@ -416,8 +418,12 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
   options: T
   escapeKey?: keyof T
   fullscreen?: boolean
+  /** Publishes the options row as `experimental.session.permission.options`, so a plugin may replace it. */
+  optionsSlot?: { readonly sessionID: string; readonly requestID: string }
   onSelect: (option: keyof T) => void
-}) {
+}
+
+export function SessionQuestion<const T extends Record<string, string>>(props: QuestionProps<T>) {
   const theme = useTheme()
   const dimensions = useTerminalDimensions()
   const keys = Object.keys(props.options) as (keyof T)[]
@@ -426,76 +432,8 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
     expanded: false,
   })
   const narrow = createMemo(() => dimensions().width < 80)
-  const shortcuts = Keymap.useShortcuts()
   const id = () => props.id ?? "session.permission"
-  const group = () => props.group ?? "Permission"
-  const dismiss = () => {
-    if (store.expanded) {
-      setStore("expanded", false)
-      return
-    }
-    if (props.escapeKey) props.onSelect(props.escapeKey)
-  }
-
-  Keymap.createLayer(() => ({
-    mode: "base",
-    commands: [
-      ...(props.escapeKey
-        ? [
-            {
-              id: "app.exit",
-              title: "Reject permission",
-              group: group(),
-              bind: false as const,
-              run: dismiss,
-            },
-          ]
-        : []),
-      ...(props.fullscreen
-        ? [
-            {
-              id: "permission.prompt.fullscreen",
-              title: "Toggle permission fullscreen",
-              group: group(),
-              bind: false as const,
-              run: () => setStore("expanded", (value) => !value),
-            },
-          ]
-        : []),
-      ...(keys.length > 1
-        ? [
-            {
-              bind: "left,h",
-              title: "Previous option",
-              group: group(),
-              run: () => {
-                const index = keys.indexOf(store.selected)
-                setStore("selected", keys[(index - 1 + keys.length) % keys.length])
-              },
-            },
-            {
-              bind: "right,l",
-              title: "Next option",
-              group: group(),
-              run: () => {
-                const index = keys.indexOf(store.selected)
-                setStore("selected", keys[(index + 1) % keys.length])
-              },
-            },
-          ]
-        : []),
-      {
-        bind: "return",
-        title: "Select option",
-        group: group(),
-        run: () => props.onSelect(store.selected),
-      },
-      ...(props.escapeKey ? [{ bind: "escape", title: "Reject permission", group: group(), run: dismiss }] : []),
-    ],
-    bindings: [...(props.escapeKey ? ["app.exit"] : []), ...(props.fullscreen ? ["permission.prompt.fullscreen"] : [])],
-  }))
-
-  const hint = createMemo(() => (store.expanded ? "minimize" : "fullscreen"))
+  const options = () => <QuestionOptions question={props} id={id()} keys={keys} store={store} setStore={setStore} />
   useRenderer()
 
   const content = () => (
@@ -550,66 +488,13 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
         justifyContent={narrow() ? "flex-start" : "space-between"}
         alignItems={narrow() ? "flex-start" : "center"}
       >
-        <box
-          id={`${id()}.actions`}
-          ref={SimulationSemantics.bind(() => ({
-            instance: props.instance,
-            role: "listbox",
-            label: props.choicesLabel ?? "Permission choices",
-          }))}
-          flexDirection="row"
-          gap={1}
-          flexShrink={0}
-        >
-          <For each={keys}>
-            {(option) => (
-              <box
-                id={`${id()}.action.${String(option)}`}
-                ref={SimulationSemantics.bind(() => ({
-                  instance: props.instance,
-                  role: "option",
-                  label: props.options[option],
-                  focused: option === store.selected,
-                  selected: option === store.selected,
-                  disabled: false,
-                }))}
-                paddingLeft={1}
-                paddingRight={1}
-                backgroundColor={
-                  option === store.selected
-                    ? theme.background.action.primary.focused
-                    : theme.background.action.primary.base
-                }
-                onMouseMove={() => setStore("selected", option)}
-                onMouseUp={() => {
-                  setStore("selected", option)
-                  props.onSelect(option)
-                }}
-              >
-                <text
-                  fg={option === store.selected ? theme.text.action.primary.focused : theme.text.action.primary.base}
-                >
-                  {props.options[option]}
-                </text>
-              </box>
-            )}
-          </For>
-        </box>
-        <box flexDirection="row" gap={2} flexShrink={0}>
-          <Show when={props.fullscreen}>
-            <text fg={theme.text.base}>
-              {shortcuts.get("permission.prompt.fullscreen")} <span style={{ fg: theme.text.muted }}>{hint()}</span>
-            </text>
-          </Show>
-          <Show when={keys.length > 1}>
-            <text fg={theme.text.base}>
-              {"⇆"} <span style={{ fg: theme.text.muted }}>select</span>
-            </text>
-          </Show>
-          <text fg={theme.text.base}>
-            enter <span style={{ fg: theme.text.muted }}>confirm</span>
-          </text>
-        </box>
+        <Show when={props.optionsSlot} fallback={options()}>
+          {(slot) => (
+            <Slot path="experimental.session.permission.options" input={slot()}>
+              {options()}
+            </Slot>
+          )}
+        </Show>
       </box>
     </box>
   )
@@ -618,5 +503,156 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
     <Show when={!store.expanded} fallback={<Portal>{content()}</Portal>}>
       {content()}
     </Show>
+  )
+}
+
+// The options row and the keys that drive it, kept together so a plugin replacing the row removes its keymap too.
+function QuestionOptions<const T extends Record<string, string>>(props: {
+  question: QuestionProps<T>
+  id: string
+  keys: (keyof T)[]
+  store: { selected: keyof T; expanded: boolean }
+  setStore: SetStoreFunction<{ selected: keyof T; expanded: boolean }>
+}) {
+  const theme = useTheme()
+  const shortcuts = Keymap.useShortcuts()
+  const group = () => props.question.group ?? "Permission"
+  const hint = createMemo(() => (props.store.expanded ? "minimize" : "fullscreen"))
+  const dismiss = () => {
+    if (props.store.expanded) {
+      props.setStore("expanded", false)
+      return
+    }
+    if (props.question.escapeKey) props.question.onSelect(props.question.escapeKey)
+  }
+
+  Keymap.createLayer(() => ({
+    mode: "base",
+    commands: [
+      ...(props.question.escapeKey
+        ? [
+            {
+              id: "app.exit",
+              title: "Reject permission",
+              group: group(),
+              bind: false as const,
+              run: dismiss,
+            },
+          ]
+        : []),
+      ...(props.question.fullscreen
+        ? [
+            {
+              id: "permission.prompt.fullscreen",
+              title: "Toggle permission fullscreen",
+              group: group(),
+              bind: false as const,
+              run: () => props.setStore("expanded", (value) => !value),
+            },
+          ]
+        : []),
+      ...(props.keys.length > 1
+        ? [
+            {
+              bind: "left,h",
+              title: "Previous option",
+              group: group(),
+              run: () => {
+                const index = props.keys.indexOf(props.store.selected)
+                props.setStore("selected", props.keys[(index - 1 + props.keys.length) % props.keys.length])
+              },
+            },
+            {
+              bind: "right,l",
+              title: "Next option",
+              group: group(),
+              run: () => {
+                const index = props.keys.indexOf(props.store.selected)
+                props.setStore("selected", props.keys[(index + 1) % props.keys.length])
+              },
+            },
+          ]
+        : []),
+      {
+        bind: "return",
+        title: "Select option",
+        group: group(),
+        run: () => props.question.onSelect(props.store.selected),
+      },
+      ...(props.question.escapeKey
+        ? [{ bind: "escape", title: "Reject permission", group: group(), run: dismiss }]
+        : []),
+    ],
+    bindings: [
+      ...(props.question.escapeKey ? ["app.exit"] : []),
+      ...(props.question.fullscreen ? ["permission.prompt.fullscreen"] : []),
+    ],
+  }))
+
+  return (
+    <>
+      <box
+        id={`${props.id}.actions`}
+        ref={SimulationSemantics.bind(() => ({
+          instance: props.question.instance,
+          role: "listbox",
+          label: props.question.choicesLabel ?? "Permission choices",
+        }))}
+        flexDirection="row"
+        gap={1}
+        flexShrink={0}
+      >
+        <For each={props.keys}>
+          {(option) => (
+            <box
+              id={`${props.id}.action.${String(option)}`}
+              ref={SimulationSemantics.bind(() => ({
+                instance: props.question.instance,
+                role: "option",
+                label: props.question.options[option],
+                focused: option === props.store.selected,
+                selected: option === props.store.selected,
+                disabled: false,
+              }))}
+              paddingLeft={1}
+              paddingRight={1}
+              backgroundColor={
+                option === props.store.selected
+                  ? theme.background.action.primary.focused
+                  : theme.background.action.primary.base
+              }
+              onMouseMove={() => props.setStore("selected", option)}
+              onMouseUp={() => {
+                props.setStore("selected", option)
+                props.question.onSelect(option)
+              }}
+            >
+              <text
+                fg={
+                  option === props.store.selected ? theme.text.action.primary.focused : theme.text.action.primary.base
+                }
+              >
+                {props.question.options[option]}
+              </text>
+            </box>
+          )}
+        </For>
+      </box>
+      <box flexDirection="row" gap={2} flexShrink={0}>
+        <Show when={props.question.fullscreen}>
+          <text fg={theme.text.base}>
+            {shortcuts.get("permission.prompt.fullscreen")} <span style={{ fg: theme.text.muted }}>{hint()}</span>
+          </text>
+        </Show>
+        <Show when={props.keys.length > 1}>
+          <text fg={theme.text.base}>
+            {"⇆"} <span style={{ fg: theme.text.muted }}>select</span>
+          </text>
+        </Show>
+        <text fg={theme.text.base}>
+          enter <span style={{ fg: theme.text.muted }}>confirm</span>
+        </text>
+      </box>
+    </>
   )
 }
