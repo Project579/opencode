@@ -61,6 +61,8 @@ const BASH_EXPANSION_RE = /\$(?:\\.|\\\n)*[({]|`/
 const BASH_ESCAPE_RE = /\\(?:x[\da-fA-F]{1,2}|[0-7]{1,3}|u[\da-fA-F]{1,4}|U[\da-fA-F]{1,8})/
 const BASH_ASSIGNMENT_DECLARATIONS = new Set(["declare", "typeset", "export", "readonly", "local"])
 const BASH_DECLARATIONS = new Set([...BASH_ASSIGNMENT_DECLARATIONS, "unset", "unsetenv"])
+/** Builtins that only bind or unset variables, which are not permission resources on their own. */
+export const declarations: ReadonlySet<string> = BASH_DECLARATIONS
 const BASH_PRECOMMANDS = new Set(["builtin", "command", "time", "coproc", "!"])
 const ZSH_PRECOMMANDS = new Set(["noglob", "nocorrect", "exec", "-"])
 const ZSH_ARITHMETIC_BUILTINS = new Set([

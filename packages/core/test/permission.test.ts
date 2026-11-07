@@ -474,23 +474,23 @@ describe("shell scanner permission impact", () => {
   // Outcome pairs are [legacy, native].
   for (const fixture of [
     {
-      name: "timed command preserves wrapper approvals",
+      name: "timed command also needs approval for the timed command",
       shell: "bash",
       command: "time -p git status",
-      approved: ["time *"],
-      exact: ["time -p git status"],
-      denied: "time -p git status",
+      approved: ["time -p git status *", "git status *"],
+      exact: ["time -p git status", "git status"],
+      denied: "git status *",
       savedEffect: ["allow", "allow"],
       exactEffect: ["allow", "allow"],
       deniedEffect: ["deny", "deny"],
     },
     {
-      name: "coprocess command preserves wrapper approvals",
+      name: "coprocess command also needs approval for the coprocess command",
       shell: "bash",
       command: "coproc git status",
-      approved: ["coproc *"],
-      exact: ["coproc git status"],
-      denied: "coproc git status",
+      approved: ["coproc git status *", "git status *"],
+      exact: ["coproc git status", "git status"],
+      denied: "git status *",
       savedEffect: ["allow", "allow"],
       exactEffect: ["allow", "allow"],
       deniedEffect: ["deny", "deny"],
@@ -840,4 +840,98 @@ describe("shell scanner permission impact", () => {
       }),
     )
   }
+})
+
+describe("shell rules through wrapper commands", () => {
+  const ask = (command: string) =>
+    Effect.gen(function* () {
+      const service = yield* Permission.Service
+      const parsed = yield* ShellParse.scan(command, "bash", "/project")
+      return yield* service.ask(
+        assertion({
+          action: "shell",
+          resources: parsed.commands.map((item) => item.resource),
+          save: parsed.commands.map((item) => item.save),
+        }),
+      )
+    })
+
+  for (const command of [
+    "time rm x",
+    "command rm x",
+    "builtin rm x",
+    "env rm x",
+    "env -i PATH=/bin rm x",
+    "FOO=1 rm x",
+    "nohup rm x",
+    "timeout 5 rm x",
+    "nice -n 5 rm x",
+    "sudo -u root rm x",
+    "xargs rm <<< x",
+    "echo x | xargs rm",
+    "bash -c 'rm x'",
+    "sh -c 'rm x'",
+    "bash -lc 'git status && rm x'",
+    "eval 'rm x'",
+    "find . -name x -exec rm {} \;",
+    "sudo env FOO=1 bash -c 'rm x'",
+  ])
+    it.live(`a deny for the wrapped command applies to ${command}`, () =>
+      Effect.gen(function* () {
+        yield* setup([
+          { action: "*", resource: "*", effect: "allow" },
+          { action: "shell", resource: "rm *", effect: "deny" },
+        ])
+        expect((yield* ask(command)).effect).toBe("deny")
+      }),
+    )
+
+  it.live("leaves unrelated wrapped commands allowed", () =>
+    Effect.gen(function* () {
+      yield* setup([
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "shell", resource: "rm *", effect: "deny" },
+      ])
+      for (const command of ["time git status", "env FOO=1 ls", "bash -c 'git status'", "echo x | xargs ls"])
+        expect((yield* ask(command)).effect, command).toBe("allow")
+    }),
+  )
+
+  it.live("always saves the wrapper with what it runs, never the whole wrapper", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const service = yield* Permission.Service
+      const saved = yield* PermissionSaved.Service
+      for (const [command, grants] of [
+        ["env rm x", ["env rm *", "rm *"]],
+        ["timeout 5 git status", ["timeout 5 git status *", "git status *"]],
+        ["bash -c 'rm x'", ["bash -c 'rm x'", "rm *"]],
+        ["command -v rm", ["command -v rm"]],
+      ] as const) {
+        const parsed = yield* ShellParse.scan(command, "bash", "/project")
+        expect(parsed.commands.map((item) => item.save), command).toEqual([...grants])
+      }
+
+      const first = yield* ask("env rm x")
+      expect(first.effect).toBe("ask")
+      yield* service.reply({ requestID: first.id, reply: "always" })
+      expect((yield* saved.list({ projectID: Project.ID.global })).map((rule) => rule.resource).sort()).toEqual([
+        "env rm *",
+        "rm *",
+      ])
+      expect((yield* ask("env rm y")).effect).toBe("allow")
+      const other = yield* ask("env curl https://example.com")
+      expect(other.effect).toBe("ask")
+      yield* service.reply({ requestID: other.id, reply: "once" })
+    }),
+  )
+
+  it.live("keeps only an exact check when the wrapped script is expanded by the outer shell", () =>
+    Effect.gen(function* () {
+      for (const command of ['bash -c "rm $X"', "env $CMD x", 'eval "$x"']) {
+        const parsed = yield* ShellParse.scan(command, "bash", "/project")
+        expect(parsed.commands, command).toEqual([{ resource: command, save: command }])
+      }
+    }),
+  )
 })

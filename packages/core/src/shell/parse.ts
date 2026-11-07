@@ -159,6 +159,44 @@ const ARITY: Record<string, number> = {
 }
 const PREFIX_LENGTH = Math.max(...Object.values(ARITY))
 
+// Commands that run their operands as another command. `values` lists options that take a separate value, and
+// `operands` counts the operands before the command, such as timeout's duration or chroot's directory.
+const WRAPPERS: Record<string, { values?: ReadonlyArray<string>; operands?: number; assignments?: true }> = {
+  builtin: {},
+  chroot: { operands: 1 },
+  command: {},
+  coproc: {},
+  doas: { values: ["-u", "-C"] },
+  env: { values: ["-u", "-C", "--unset", "--chdir"], assignments: true },
+  exec: { values: ["-a"] },
+  ionice: { values: ["-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"] },
+  nice: { values: ["-n", "--adjustment"] },
+  nocorrect: {},
+  noglob: {},
+  nohup: {},
+  setsid: {},
+  stdbuf: { values: ["-i", "-o", "-e", "--input", "--output", "--error"] },
+  sudo: {
+    values: [
+      ...["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-T", "-U"],
+      ...["--user", "--group", "--host", "--prompt", "--close-from", "--chdir", "--role", "--type"],
+      ...["--command-timeout", "--other-user"],
+    ],
+  },
+  time: { values: ["-f", "-o", "--format", "--output"] },
+  timeout: { values: ["-s", "-k", "--signal", "--kill-after"], operands: 1 },
+  xargs: {
+    values: [
+      ...["-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"],
+      ...["--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"],
+    ],
+  },
+}
+const SHELLS = new Set(["ash", "bash", "dash", "ksh", "mksh", "sh", "zsh"])
+const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"])
+const MAX_WRAPPER_DEPTH = 8
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/
+
 export function scan(command: string, shell: string, cwd: string): Effect.Effect<Result, Error> {
   return Effect.suspend(() => {
     const powershell = ShellSelect.ps(shell)
@@ -169,6 +207,7 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
     if (scanned.kind === "opaque")
       return Effect.fail(new Error(`Portable shell scanner cannot analyze command: ${scanned.reason}`))
 
+    const dialect = shellName === "bash" || shellName === "zsh" ? shellName : "posix"
     const output: Result = { commands: [], directories: [] }
     for (const item of scanned.commands) {
       // Declarations are skipped as standalone permission resources, while nested substitutions remain.
@@ -222,6 +261,16 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
         output.directories.push(...resolved.directories)
         if (directoryCommand === parts && resolved.complete) continue
       }
+      const wrapped = powershell
+        ? undefined
+        : unwrap(item.redirectWordCount === undefined ? item.words : item.words.slice(0, item.redirectWordCount), words, dialect)
+      if (wrapped) {
+        output.commands.push(
+          { resource: item.resource, save: wrapped.prefix ? `${wrapped.prefix.join(" ")} *` : item.resource },
+          ...wrapped.inner,
+        )
+        continue
+      }
       const selected = prefix(words.slice(0, PREFIX_LENGTH))
       const conventional = `${selected.join(" ")} *`
       const end = item.wordEnds?.[selected.length - 1]
@@ -243,6 +292,10 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
         resource: item.resource,
         save,
       })
+      // Leading `NAME=value` assignments are part of the resource, so rules for the command itself need a resource
+      // without them.
+      if (!powershell && ASSIGNMENT.test(item.resource) && !ShellScan.declarations.has(words[0] ?? ""))
+        output.commands.push({ resource: words.join(" "), save })
     }
     return Effect.succeed(output)
   })
@@ -606,4 +659,135 @@ function prefix(tokens: string[]) {
     if (arity !== undefined) return tokens.slice(0, arity)
   }
   return tokens.slice(0, 1)
+}
+
+type Entry = Result["commands"][number]
+
+/**
+ * Commands a wrapper such as `env`, `xargs`, `find -exec` or `bash -c` runs, each checked as its own resource so
+ * rules for the command apply through the wrapper. `prefix` is what "always" saves for the wrapper itself; without
+ * one the wrapper is saved exactly, never as `<wrapper> *`. `undefined` means the command wraps nothing.
+ */
+function unwrap(
+  words: string[],
+  raw: string[],
+  dialect: ShellScan.Dialect,
+  depth = 0,
+): { prefix?: string[]; inner: Entry[] } | undefined {
+  const head = words[0] ?? ""
+  if (head === "eval") return { inner: script(words.slice(1).join(" "), raw.slice(1).every(isStaticBashWord), dialect, depth) }
+  if (SHELLS.has(head)) {
+    const index = shellScript(words)
+    if (index === undefined) return
+    return { inner: script(words[index], isStaticBashWord(raw[index]), head === "zsh" || head === "bash" ? head : "posix", depth) }
+  }
+  if (head === "find") return findExec(words, raw, dialect, depth)
+  const spec = WRAPPERS[head]
+  if (!spec) return
+  const start = commandStart(words, head, spec)
+  if (start === undefined) return { inner: [] }
+  if (typeof start === "object") return { inner: script(start.text, start.static(raw), dialect, depth) }
+  // A dynamic command name cannot be matched by rules, so the wrapper keeps only its own exact check.
+  if (!isStaticBashWord(raw[start])) return { inner: [] }
+  const inner = command(words.slice(start), raw.slice(start), dialect, depth)
+  return { prefix: inner.prefix && [...raw.slice(0, start), ...inner.prefix], inner: inner.entries }
+}
+
+function command(words: string[], raw: string[], dialect: ShellScan.Dialect, depth: number) {
+  const resource = raw.join(" ")
+  // Like their unwrapped forms, directory changes are checked as directories and declarations are not resources.
+  if (CWD.has(words[0] ?? "") || ShellScan.declarations.has(words[0] ?? ""))
+    return { prefix: raw.slice(0, 1), entries: [] }
+  const nested = depth < MAX_WRAPPER_DEPTH ? unwrap(words, raw, dialect, depth + 1) : undefined
+  if (!nested) {
+    const selected = prefix(raw.slice(0, PREFIX_LENGTH))
+    return { prefix: selected, entries: [{ resource, save: `${selected.join(" ")} *` }] }
+  }
+  return {
+    prefix: nested.prefix,
+    entries: [{ resource, save: nested.prefix ? `${nested.prefix.join(" ")} *` : resource }, ...nested.inner],
+  }
+}
+
+// A script whose text the outer shell expands, or that the scanner cannot analyze, keeps only the wrapper's exact check.
+function script(text: string, isStatic: boolean, dialect: ShellScan.Dialect, depth: number): Entry[] {
+  if (!isStatic || depth >= MAX_WRAPPER_DEPTH) return []
+  const scanned = ShellScan.scan(text, dialect)
+  if (scanned.kind === "opaque") return []
+  return scanned.commands
+    .filter((item) => !item.declaration)
+    .flatMap((item) => {
+      const end = item.redirectWordCount ?? item.words.length
+      return command(item.words.slice(0, end), item.rawWords.slice(0, end), dialect, depth + 1).entries
+    })
+}
+
+/** The index of the script operand when a shell is invoked with `-c`. */
+function shellScript(words: string[]) {
+  let index = 1
+  let inline = false
+  while (index < words.length && /^[-+]/.test(words[index])) {
+    const word = words[index]
+    index++
+    if (word === "--" || word === "-") break
+    if (word.startsWith("--")) continue
+    if (/^[-+][oO]$/.test(word)) index++
+    else if (word.startsWith("-") && word.includes("c")) inline = true
+  }
+  return inline && index < words.length ? index : undefined
+}
+
+function findExec(words: string[], raw: string[], dialect: ShellScan.Dialect, depth: number) {
+  const ranges = words.flatMap((word, index) => {
+    if (!FIND_EXEC.has(word)) return []
+    const end = words.findIndex((item, next) => next > index && (item === ";" || item === "+"))
+    return [[index + 1, end < 0 ? words.length : end] as const]
+  })
+  if (ranges.length === 0) return
+  const inner = ranges.map(([start, end]) => ({
+    start,
+    ...command(words.slice(start, end), raw.slice(start, end), dialect, depth),
+  }))
+  const only = inner.length === 1 ? inner[0] : undefined
+  return {
+    prefix: only?.prefix && [...raw.slice(0, only.start), ...only.prefix],
+    inner: inner.flatMap((item) => item.entries),
+  }
+}
+
+/** Where the wrapped command starts, or the text `env -S` splits into one. */
+function commandStart(words: string[], head: string, spec: (typeof WRAPPERS)[string]) {
+  let index = 1
+  while (index < words.length) {
+    const word = words[index]
+    if (word === "--") {
+      index++
+      break
+    }
+    if (word === "-" && head === "env") {
+      index++
+      continue
+    }
+    if (!word.startsWith("-") || word === "-") break
+    // `command -v` and `sudo -e` look up or edit their operands instead of running them.
+    if (head === "command" && /^-p*[vV]/.test(word)) return
+    if (head === "sudo" && (word === "-e" || word === "--edit")) return
+    if (head === "env" && (word === "-S" || word === "--split-string"))
+      return { text: words.slice(index + 1).join(" "), static: (raw: string[]) => raw.slice(index + 1).every(isStaticBashWord) }
+    if (head === "env" && word.startsWith("--split-string="))
+      return {
+        text: [word.slice("--split-string=".length), ...words.slice(index + 1)].join(" "),
+        static: (raw: string[]) => raw.slice(index).every(isStaticBashWord),
+      }
+    if (word.startsWith("--")) {
+      index += !word.includes("=") && spec.values?.includes(word) ? 2 : 1
+      continue
+    }
+    // In a cluster such as `-un`, a value option takes the next word only when it comes last.
+    const valued = [...word.slice(1)].findIndex((letter) => spec.values?.includes(`-${letter}`))
+    index += valued >= 0 && valued === word.length - 2 ? 2 : 1
+  }
+  if (spec.assignments) while (ASSIGNMENT.test(words[index] ?? "")) index++
+  index += spec.operands ?? 0
+  return index < words.length ? index : undefined
 }

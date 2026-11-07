@@ -144,7 +144,8 @@ describe("native shell syntax compatibility", () => {
       commands: [
         { resource: 'echo "${(P)f}"', save: "echo *" },
         { resource: "ls -d src/**/target(N/) *.ts(.OL[1,3])", save: "ls *" },
-        { resource: "nohup sleep 1 >/dev/null 2>&1", save: "nohup *" },
+        { resource: "nohup sleep 1 >/dev/null 2>&1", save: "nohup sleep *" },
+        { resource: "sleep 1", save: "sleep *" },
         { resource: "echo started", save: "echo *" },
       ],
       directories: [],

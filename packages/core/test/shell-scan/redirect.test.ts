@@ -157,6 +157,7 @@ describe("Bash redirect resource oracle", () => {
     expect(parsed.commands).toEqual([
       { resource: "printf ok", save: "printf *" },
       { resource: "FOO=bar >output git status 3>tail", save: "git status *" },
+      { resource: "git status", save: "git status *" },
     ])
   })
 
