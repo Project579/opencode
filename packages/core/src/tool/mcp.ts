@@ -60,13 +60,7 @@ export const layer = Layer.effect(
                 output: (tool.outputSchema ?? {}) as JsonSchema.JsonSchema,
                 execute: (input, context) =>
                   Effect.gen(function* () {
-                    yield* permission.assert({
-                      action: name(tool.server, tool.name),
-                      resources: ["*"],
-                      save: ["*"],
-                      metadata: { input: input ?? {} },
-                      ...Permission.invocation(context),
-                    })
+                    yield* permission.assert(Permission.wholeTool(name(tool.server, tool.name), input, context))
                     const result = yield* mcp
                       .callTool({
                         server: tool.server,

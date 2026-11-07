@@ -43,6 +43,29 @@ export const invocation = (context: Pick<Tool.Context, "sessionID" | "agent" | "
   source: { type: "tool" as const, messageID: context.messageID, id: context.id },
 })
 
+/**
+ * A whole-tool request for a tool that has no finer policy of its own, such as an MCP or installed-plugin tool.
+ * Without `save`, the prompt offers no "always", for actions whose saved rule would also answer other checks.
+ */
+export const wholeTool = (
+  action: string,
+  input: unknown,
+  context: Pick<Tool.Context, "sessionID" | "agent" | "messageID" | "id">,
+  save = true,
+): AssertInput => ({
+  action,
+  resources: ["*"],
+  ...(save ? { save: ["*"] } : {}),
+  metadata: { input: input ?? {} },
+  ...invocation(context),
+})
+
+/** True when the last rule for the action covers every resource and denies it, so no call of the action can run. */
+export const whollyDenied = (action: string, rules: Permission.Ruleset) => {
+  const rule = rules.findLast((rule) => Wildcard.match(action, rule.action))
+  return rule?.resource === "*" && rule.effect === "deny"
+}
+
 export interface ReplyInput {
   readonly requestID: ID
   readonly reply: Reply
@@ -113,6 +136,13 @@ export interface Interface {
   readonly assert: (input: AssertInput) => Effect.Effect<void, Error | SessionErrors.NotFoundError>
   /** Fails only when the rules deny the request; never asks the user. */
   readonly assertNotDenied: (input: AssertInput) => Effect.Effect<void, BlockedError | SessionErrors.NotFoundError>
+  /**
+   * Fails only when the agent and session rules deny the action outright (see `whollyDenied`), or a permission
+   * `evaluate` hook such as managed policy denies the request; never asks the user, and ignores finer rules.
+   */
+  readonly assertNotWhollyDenied: (
+    input: AssertInput,
+  ) => Effect.Effect<void, BlockedError | SessionErrors.NotFoundError>
   /** True only when the rules already allow the request; never asks the user. */
   readonly allows: (input: AssertInput) => Effect.Effect<boolean, SessionErrors.NotFoundError>
   readonly reply: (input: ReplyInput) => Effect.Effect<void, NotFoundError>
@@ -298,6 +328,28 @@ const layer = Layer.effect(
       })
     })
 
+    const assertNotWhollyDenied = Effect.fn("Permission.assertNotWhollyDenied")(function* (input: AssertInput) {
+      const rules = yield* configured(input.sessionID, input.agent)
+      const blocked = (reason?: string) =>
+        new BlockedError({
+          rules: relevant(input, rules),
+          permission: input.action,
+          resources: input.resources,
+          reason,
+        })
+      if (whollyDenied(input.action, rules)) return yield* blocked()
+      const event = yield* hooks.trigger("permission", "evaluate", {
+        sessionID: input.sessionID,
+        agent: input.agent,
+        action: input.action,
+        resources: input.resources,
+        metadata: input.metadata,
+        source: input.source,
+        effect: "allow",
+      })
+      if (event.effect === "deny") return yield* blocked(event.message)
+    })
+
     const allows = Effect.fn("Permission.allows")(function* (input: AssertInput) {
       if (closed) return false
       return (yield* evaluateInput(input)).effect === "allow"
@@ -377,7 +429,18 @@ const layer = Layer.effect(
       return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
     })
 
-    return Service.of({ ask, assert, assertNotDenied, allows, reply, get, forSession, list, close })
+    return Service.of({
+      ask,
+      assert,
+      assertNotDenied,
+      assertNotWhollyDenied,
+      allows,
+      reply,
+      get,
+      forSession,
+      list,
+      close,
+    })
   }),
 )
 

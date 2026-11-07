@@ -78,6 +78,7 @@ const permissionLayer = Layer.succeed(
     ask: (input) => Effect.succeed({ id: input.id ?? Permission.ID.create(), effect: "ask" }),
     assert: () => Effect.void,
     assertNotDenied: () => Effect.void,
+    assertNotWhollyDenied: () => Effect.void,
     allows: () => Effect.succeed(false),
     reply: () => Effect.void,
     get: () => Effect.succeed(undefined),
@@ -86,7 +87,11 @@ const permissionLayer = Layer.succeed(
   }),
 )
 
-export const makePluginTestLayer = (permission = permissionLayer, generate = generateLayer) =>
+// Pass `null` for the real permission service, when a test depends on how rules evaluate.
+export const makePluginTestLayer = (
+  permission: Layer.Layer<Permission.Service> | null = permissionLayer,
+  generate = generateLayer,
+) =>
   AppNodeBuilder.build(
     LayerNode.group([
       AppProcess.node,
@@ -140,7 +145,7 @@ export const makePluginTestLayer = (permission = permissionLayer, generate = gen
       Config.node.replace(configLayer),
       Mcp.node.replace(emptyMcpLayer),
       Generate.node.replace(generate),
-      Permission.node.replace(permission),
+      ...(permission ? [Permission.node.replace(permission)] : []),
       offlineModels,
     ],
   ).pipe(Layer.provideMerge(configLayer))

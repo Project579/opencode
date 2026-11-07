@@ -27,6 +27,14 @@ export interface Namespace {
 interface BaseOptions {
   readonly namespace?: string
   readonly permission?: string
+  readonly experimental?: {
+    /**
+     * Experimental: may change without compatibility guarantees. `self: true` declares that the tool calls
+     * `permission.assert` itself with its own resources. OpenCode then does not ask before a call, as it does for other
+     * tools from installed plugins; it only blocks calls when the tool's action is denied outright.
+     */
+    readonly permission?: { readonly self: true }
+  }
 }
 
 export type Options = BaseOptions &

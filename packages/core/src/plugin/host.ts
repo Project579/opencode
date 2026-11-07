@@ -29,6 +29,7 @@ import { Rpc } from "../rpc.js"
 import { AbsolutePath, type DeepMutable } from "../schema.js"
 import { Skill } from "../skill.js"
 import { Tool } from "../tool.js"
+import { effectiveName } from "../tool/runtime.js"
 import { Workspace } from "../workspace.js"
 import { Vcs } from "../vcs.js"
 import { WebSearch } from "../websearch.js"
@@ -37,7 +38,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
 import { Generate } from "../generate.js"
 import { Permission } from "../permission.js"
 import { PluginHooks } from "./hooks.js"
-import type { Interface } from "../plugin.js"
+import type { Generation, Interface } from "../plugin.js"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 
 const mutable = <T>(value: T) => value as DeepMutable<T>
@@ -50,7 +51,15 @@ const isRpcType = (type: string): type is RpcEvent["type"] => type.startsWith("r
 const isRpcEvent = (event: Event.Payload): event is RpcEvent => isRpcType(event.type)
 const isPublicEvent = (event: Event.Payload): event is EventManifest.ServerEvent | RpcEvent =>
   EventManifest.isServer(event) || isRpcEvent(event)
-export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interface, "list">, pluginID: string) {
+// Actions built-in code checks that no built-in tool is named after: Code Mode's `execute` and the file-access guard.
+const GUARD_ACTIONS = ["execute", "external_directory"]
+// Per tool registry, the actions built-in tools check. Built-in plugins activate first and record them as they add tools.
+const builtinActions = new WeakMap<Tool.Interface, Set<string>>()
+export const make = Effect.fn("PluginHost.make")(function* (
+  plugin: Pick<Interface, "list">,
+  pluginID: string,
+  source: Generation["source"] = { type: "builtin" },
+) {
   const app = yield* App.Metadata
   const agents = yield* Agent.Service
   const artifacts = yield* Artifact.Service
@@ -102,6 +111,62 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
     Effect.gen(function* () {
       return { location: locationInfo(yield* Location.Service), data: yield* effect }
     }).pipe(Effect.provide(locations.get(ref)))
+
+  const assertPermission = (input: Permission.AssertInput) =>
+    permission.assert(input).pipe(
+      Effect.catchTags({
+        "Permission.BlockedError": (error) => Effect.fail(new Tool.Error({ message: error.message, error })),
+        "Permission.CorrectedError": (error) => Effect.fail(new Tool.Error({ message: error.feedback, error })),
+        "Session.NotFoundError": (error) =>
+          Effect.fail(new Tool.Error({ message: `Session not found: ${error.sessionID}`, error })),
+      }),
+    )
+
+  // Built-in tools check permission themselves. A tool an installed plugin adds may not, so the user's rule for its
+  // name is applied before it runs, the way MCP tools apply theirs. Updates are left alone: a plugin that edits or
+  // wraps an existing tool keeps that tool's own, finer check, which a whole-tool check would override.
+  const reserved = builtinActions.get(tools) ?? new Set(GUARD_ACTIONS)
+  builtinActions.set(tools, reserved)
+  const authorized = (editor: Tool.Editor): Tool.Editor => ({
+    ...editor,
+    add: (tool) =>
+      editor.add({
+        ...tool,
+        execute: (input, context) =>
+          Effect.gen(function* () {
+            const action = tool.options?.permission ?? effectiveName(tool)
+            // A tool that checks its own resources gets only the floor: a whole-tool check would block or repeat it.
+            if (tool.options?.experimental?.permission?.self)
+              yield* permission.assertNotWhollyDenied(Permission.wholeTool(action, input, context)).pipe(
+                Effect.catchTags({
+                  "Permission.BlockedError": (error) => Effect.fail(new Tool.Error({ message: error.message, error })),
+                  "Session.NotFoundError": (error) =>
+                    Effect.fail(new Tool.Error({ message: `Session not found: ${error.sessionID}`, error })),
+                }),
+              )
+            else {
+              // "Always" saves `action:*`, which would also answer every finer check other tools make under the same
+              // action, so it is offered only for an action this tool has to itself.
+              const shared =
+                reserved.has(action) ||
+                (yield* tools.list()).filter((other) => (other.options?.permission ?? other.id) === action).length > 1
+              yield* assertPermission(Permission.wholeTool(action, input, context, !shared))
+            }
+            // Called as a method so a plugin's executor keeps `this`.
+            return yield* tool.execute(input, context)
+          }),
+      }),
+  })
+  // Built-in plugins record the actions their tools check, so installed plugins can't offer "always" for them.
+  const recording = (editor: Tool.Editor): Tool.Editor => ({
+    ...editor,
+    add: (tool) => {
+      reserved.add(tool.options?.permission ?? effectiveName(tool))
+      editor.add(tool)
+    },
+  })
+  const transformTools: typeof tools.transform = (callback) =>
+    tools.transform((editor) => callback(source.type === "builtin" ? recording(editor) : authorized(editor)))
 
   const sessionPermission = (input: Parameters<Plugin.Context["permission"]["get"]>[0]) =>
     permission
@@ -455,15 +520,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
           ),
         ),
       // Plain rejections stay defects, as for built-in tools, so they end the step.
-      assert: (input) =>
-        permission.assert(input).pipe(
-          Effect.catchTags({
-            "Permission.BlockedError": (error) => Effect.fail(new Tool.Error({ message: error.message, error })),
-            "Permission.CorrectedError": (error) => Effect.fail(new Tool.Error({ message: error.feedback, error })),
-            "Session.NotFoundError": (error) =>
-              Effect.fail(new Tool.Error({ message: `Session not found: ${error.sessionID}`, error })),
-          }),
-        ),
+      assert: assertPermission,
     },
     plugin: {
       list: () => response(plugin.list()),
@@ -500,7 +557,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
       hook: (name, callback) => hooks.register("shell", name, callback),
     },
     tool: {
-      transform: tools.transform,
+      transform: transformTools,
       reload: tools.reload,
       list: tools.list,
       hook: (name, callback) => hooks.register("tool", name, callback),

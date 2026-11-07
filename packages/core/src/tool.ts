@@ -17,7 +17,6 @@ import { SessionMessage } from "./session/message.js"
 import { SessionSchema } from "./session/schema.js"
 import { State } from "./state.js"
 import { definition, effectiveName, execute, normalizedName, normalizeContent } from "./tool/runtime.js"
-import { Wildcard } from "./util/wildcard.js"
 
 export class RegistrationError extends Schema.TaggedError<RegistrationError>()("Tool.RegistrationError", {
   name: Schema.String,
@@ -254,10 +253,10 @@ const layer = Layer.effect(
           const active = new Map<string, Tool.Info>()
           const rules = permissions ?? []
           for (const [name, tool] of data.tools) {
-            if (whollyDisabled(tool.options?.permission ?? name, rules)) continue
+            if (Permission.whollyDenied(tool.options?.permission ?? name, rules)) continue
             active.set(name, tool)
           }
-          const codeModeEnabled = !whollyDisabled("execute", rules)
+          const codeModeEnabled = !Permission.whollyDenied("execute", rules)
           // Without Code Mode its tools would be unreachable, so expose them as direct tools instead.
           const direct = codeModeEnabled
             ? new Map(Array.from(active).filter(([, tool]) => tool.options?.codemode === false))
@@ -322,7 +321,7 @@ const layer = Layer.effect(
         }),
       ),
       check: Effect.fn("Tool.check")(function* (input) {
-        if (whollyDisabled("execute", input.permissions)) {
+        if (Permission.whollyDenied("execute", input.permissions)) {
           return {
             ok: false,
             error: { kind: "ExecutionFailure", message: "Code Mode is disabled for this agent" },
@@ -336,7 +335,7 @@ const layer = Layer.effect(
             ([name, tool]) =>
               tool.options?.codemode !== false &&
               allowed.has(CodeModeTool.qualifiedName(tool)) &&
-              !whollyDisabled(tool.options?.permission ?? name, input.permissions),
+              !Permission.whollyDenied(tool.options?.permission ?? name, input.permissions),
           ),
         )
         const callSeq = yield* Ref.make(0)
@@ -378,10 +377,6 @@ function commit(editor: Data, id: string, input: Tool.Info & { readonly id: stri
   editor.definitions.set(id, registered.success)
 }
 
-const whollyDisabled = (action: string, rules: Permission.Ruleset) => {
-  const rule = rules.findLast((rule) => Wildcard.match(action, rule.action))
-  return rule?.resource === "*" && rule.effect === "deny"
-}
 
 const formatSchemaIssue = SchemaIssue.makeFormatterDefault()
 
