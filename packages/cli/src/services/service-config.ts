@@ -173,6 +173,16 @@ export const requireManaged = Effect.fnUntraced(function* (options: EnsureOption
   )
 })
 
+// Stops the service so the next client starts it with the changed configuration. Without management the running
+// service is left alone and keeps its old configuration until the user restarts it.
+const applyChange = Effect.fnUntraced(function* () {
+  const current = yield* options()
+  if (current.manage !== false) return yield* Service.stop(current)
+  process.stderr.write(
+    "Automatic start is off (OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART), so the change takes effect after you restart the service with your service manager.\n",
+  )
+})
+
 export const read = Effect.fn("cli.service-config.read")(function* () {
   const { fs, configFile, legacyConfigFile } = yield* paths
   if (legacyConfigFile) yield* migrateConfig(legacyConfigFile, configFile)
@@ -273,8 +283,6 @@ export const set = Effect.fn("cli.service-config.set")(function* (key: string, v
   const selected = configKey(key)
   if (selected !== "env" && nestedValue !== undefined)
     throw new Error(`Usage: opencode service set ${selected} <value>`)
-  // Every change except `disabled` stops the service so the next client starts it with the new configuration.
-  if (selected !== "disabled") yield* requireManaged(yield* options())
   switch (selected) {
     case "disabled": {
       if (value !== "true" && value !== "false") throw new Error("Disabled must be true or false")
@@ -286,7 +294,7 @@ export const set = Effect.fn("cli.service-config.set")(function* (key: string, v
       if (value !== "true" && value !== "false") throw new Error("Remote must be true or false")
       // A tunnel that cannot be created leaves remote access off instead of a service that keeps retrying.
       if (value === "true") yield* RemoteTunnel.ensure()
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       if (value === "true") {
         yield* remote()
         return
@@ -295,25 +303,25 @@ export const set = Effect.fn("cli.service-config.set")(function* (key: string, v
       return
     }
     case "hostname": {
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       yield* write({ ...(yield* read()), hostname: value })
       return
     }
     case "port": {
       const port = Number(value)
       if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("Port must be between 1 and 65535")
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       yield* write({ ...(yield* read()), port })
       return
     }
     case "password": {
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       yield* password(value)
       return
     }
     case "env": {
       if (nestedValue === undefined) throw new Error("Usage: opencode service set env <key> <value>")
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       const existing = yield* read()
       yield* write({ ...existing, env: { ...existing.env, [value]: nestedValue } })
       return
@@ -327,7 +335,7 @@ export const set = Effect.fn("cli.service-config.set")(function* (key: string, v
         })
       )
         throw new Error("CORS must be a comma-separated list of HTTP(S) origins without paths or trailing slashes")
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       yield* write({ ...(yield* read()), cors })
       return
     }
@@ -337,8 +345,6 @@ export const set = Effect.fn("cli.service-config.set")(function* (key: string, v
 export const unset = Effect.fn("cli.service-config.unset")(function* (key: string, name?: string) {
   const selected = configKey(key)
   if (selected !== "env" && name !== undefined) throw new Error(`Usage: opencode service unset ${selected}`)
-  // Every change except `disabled` stops the service so the next client starts it with the new configuration.
-  if (selected !== "disabled") yield* requireManaged(yield* options())
   switch (selected) {
     case "disabled": {
       const { disabled: _disabled, ...next } = yield* read()
@@ -346,31 +352,31 @@ export const unset = Effect.fn("cli.service-config.unset")(function* (key: strin
       return
     }
     case "remote": {
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       yield* disableRemote()
       return
     }
     case "hostname": {
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       const { hostname: _hostname, ...next } = yield* read()
       yield* write(next)
       return
     }
     case "port": {
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       const { port: _port, ...next } = yield* read()
       yield* write(next)
       return
     }
     case "password": {
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       const { password: _password, ...next } = yield* read()
       yield* write(next)
       return
     }
     case "env": {
       if (name === undefined) throw new Error("Usage: opencode service unset env <key>")
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       const existing = yield* read()
       const { [name]: _removed, ...env } = existing.env ?? {}
       const { env: _existingEnv, ...rest } = existing
@@ -378,7 +384,7 @@ export const unset = Effect.fn("cli.service-config.unset")(function* (key: strin
       return
     }
     case "cors": {
-      yield* Service.stop(yield* options())
+      yield* applyChange()
       const { cors: _cors, ...next } = yield* read()
       yield* write(next)
       return

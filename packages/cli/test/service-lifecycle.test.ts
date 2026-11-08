@@ -173,7 +173,7 @@ serviceTest(
 )
 
 serviceTest(
-  "with automatic start off, start, restart and config changes refuse and leave the running service alone",
+  "with automatic start off, start and restart refuse, config changes save, and the running service stays",
   async () => {
     await using home = await serviceHome()
     await ensure(home)
@@ -182,14 +182,11 @@ serviceTest(
 
     await expect(cli(unmanaged, "service", "restart")).rejects.toThrow("Automatic start is off")
     await expect(cli(unmanaged, "service", "start")).rejects.toThrow("Automatic start is off")
-    await expect(cli(unmanaged, "service", "set", "port", String(home.port + 1))).rejects.toThrow(
-      "Automatic start is off",
-    )
-
+    await cli(unmanaged, "service", "set", "port", String(home.port + 1))
     expect(await servers(home)).toEqual([original.pid])
     expect((await snapshot(home)).info).toEqual(original)
     expect(await Bun.file(path.join(home.root, "config", "service-local.json")).json()).toMatchObject({
-      port: home.port,
+      port: home.port + 1,
     })
     await stopped(home)
   },
