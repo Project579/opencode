@@ -128,6 +128,7 @@ export const Plugin = {
           action: name,
           resources: parsed.commands.map((command) => command.resource),
           save: parsed.commands.map((command) => command.save),
+          guards: parsed.guards,
           ...Permission.invocation(context),
         })
       // Approval can outlive the directory, so validate immediately before spawning.

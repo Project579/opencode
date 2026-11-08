@@ -150,10 +150,9 @@ describe("ShellParse", () => {
     )
     expect(wrapped).toEqual({
       commands: [
-        { resource: "command cd /outside", save: "command cd *" },
-        { resource: "builtin cd /elsewhere", save: "builtin cd *" },
-        // `command -v` only looks the name up, so nothing is wrapped and only the exact text is saved.
-        { resource: "command -v cd", save: "command -v cd" },
+        { resource: "command cd /outside", save: "command *" },
+        { resource: "builtin cd /elsewhere", save: "builtin *" },
+        { resource: "command -v cd", save: "command *" },
       ],
       directories: ["/outside", "/elsewhere"],
     })

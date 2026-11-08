@@ -355,12 +355,17 @@ const scanShell = Effect.fnUntraced(function* (command: string) {
     [target, ...directories].flatMap((item) => (item.externalDirectory ? [item.externalDirectory.resource] : [])),
   )
   const commands = Array.dedupe(parsed.commands.map((item) => item.resource))
-  return { shell, cwd: target.absolute, workspaceID: location.workspaceID, external, commands }
+  const guards = Array.dedupe(parsed.guards ?? [])
+  return { shell, cwd: target.absolute, workspaceID: location.workspaceID, external, commands, guards }
 })
 
 const assertShellPermissions = Effect.fnUntraced(function* (
   session: SessionSchema.Info,
-  scanned: { readonly external: ReadonlyArray<string>; readonly commands: ReadonlyArray<string> },
+  scanned: {
+    readonly external: ReadonlyArray<string>
+    readonly commands: ReadonlyArray<string>
+    readonly guards: ReadonlyArray<string>
+  },
   metadata?: Record<string, unknown>,
 ) {
   const permission = yield* Permission.Service
@@ -379,6 +384,7 @@ const assertShellPermissions = Effect.fnUntraced(function* (
     yield* permission.assert({
       action: "shell",
       resources: [...scanned.commands],
+      guards: scanned.guards,
       ...(metadata === undefined ? {} : { metadata }),
       sessionID: session.id,
       agent: agent.id,

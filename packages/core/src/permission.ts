@@ -34,6 +34,12 @@ export type Reply = typeof Reply.Type
 export interface AssertInput extends Omit<Request, "id" | "message"> {
   readonly id?: ID
   readonly agent?: Agent.ID
+  /**
+   * Resources checked only so rules for them hold, such as a command a shell wrapper runs. A guard is never required
+   * to be allowed, never saved and never shown: a deny rule for it denies, and an ask rule for it asks only when it
+   * takes precedence over every rule allowing the resources. Saved approvals come last, so "always" settles a guard.
+   */
+  readonly guards?: ReadonlyArray<string>
 }
 
 /** The requester fields of a permission request made by a tool call. */
@@ -126,6 +132,7 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Pe
 interface Pending {
   readonly request: Request
   readonly agent?: Agent.ID
+  readonly guards?: ReadonlyArray<string>
   readonly deferred: Deferred.Deferred<void, DeclinedError | CorrectedError>
 }
 
@@ -173,8 +180,24 @@ const layer = Layer.effect(
       return merge(agent?.permissions ?? missingAgentPermissions, session.permissions ?? [])
     })
 
-    function denied(input: Pick<Request, "action" | "resources">, rules: Permission.Ruleset) {
-      return input.resources.some((resource) => evaluate(input.action, resource, rules).effect === "deny")
+    function denied(input: AssertInput, rules: Permission.Ruleset) {
+      return [...input.resources, ...(input.guards ?? [])].some(
+        (resource) => evaluate(input.action, resource, rules).effect === "deny",
+      )
+    }
+
+    // Under last-match-wins, a guard's ask rule decides only if it comes after the rules allowing every resource.
+    function guardAsks(input: AssertInput, rules: Permission.Ruleset) {
+      if (!input.guards?.length) return false
+      const decider = (resource: string) =>
+        rules.findLastIndex(
+          (rule) => Wildcard.match(input.action, rule.action) && Wildcard.match(resource, rule.resource),
+        )
+      const floor = Math.min(...input.resources.map(decider))
+      return input.guards.some((resource) => {
+        const index = decider(resource)
+        return index > floor && rules[index].effect === "ask"
+      })
     }
 
     function relevant(input: AssertInput, rules: Permission.Ruleset) {
@@ -186,7 +209,7 @@ const layer = Layer.effect(
       if (denied(input, rules)) return { effect: "deny" as const, rules }
       const all = [...rules, ...(yield* savedRules())]
       const effects = input.resources.map((resource) => evaluate(input.action, resource, all).effect)
-      const effect: Permission.Effect = effects.includes("ask") ? "ask" : "allow"
+      const effect: Permission.Effect = effects.includes("ask") || guardAsks(input, all) ? "ask" : "allow"
       const event = yield* hooks.trigger("permission", "evaluate", {
         sessionID: input.sessionID,
         agent: input.agent,
@@ -200,7 +223,9 @@ const layer = Layer.effect(
       if (event.effect !== "ask" || unattended === undefined)
         return { effect: event.effect, message: event.message, rules: all }
       const settled = [...all, ...unattended]
-      const allowed = input.resources.every((resource) => evaluate(input.action, resource, settled).effect === "allow")
+      const allowed =
+        input.resources.every((resource) => evaluate(input.action, resource, settled).effect === "allow") &&
+        !guardAsks(input, settled)
       if (allowed) return { effect: "allow" as const, rules: all }
       return {
         effect: "deny" as const,
@@ -226,11 +251,11 @@ const layer = Layer.effect(
       }
     }
 
-    const create = (request: Request, agent?: Agent.ID) =>
+    const create = (request: Request, agent?: Agent.ID, guards?: ReadonlyArray<string>) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
           const deferred = yield* Deferred.make<void, DeclinedError | CorrectedError>()
-          const item = { request, agent, deferred }
+          const item = { request, agent, guards, deferred }
           if (closed) {
             yield* Deferred.fail(deferred, new DeclinedError())
             return item
@@ -249,7 +274,7 @@ const layer = Layer.effect(
       if (closed) return { id: input.id ?? ID.create(), effect: "deny" as const }
       const result = yield* evaluateInput(input)
       const value = request(input, result.message)
-      if (result.effect === "ask") yield* create(value, input.agent)
+      if (result.effect === "ask") yield* create(value, input.agent, input.guards)
       return { id: value.id, effect: result.effect }
     })
 
@@ -268,7 +293,7 @@ const layer = Layer.effect(
               })
             }
             if (result.effect === "allow") return
-            const item = yield* create(request(input, result.message), input.agent)
+            const item = yield* create(request(input, result.message), input.agent, input.guards)
             return yield* restore(Deferred.await(item.deferred)).pipe(
               // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
               // must not convert a user's decline into model-facing tool output. The decline
@@ -349,7 +374,7 @@ const layer = Layer.effect(
           if (input.reply !== "always" || !existing.request.save?.length) return
 
           for (const [id, item] of pending) {
-            const result = yield* evaluateInput({ ...item.request, agent: item.agent }).pipe(
+            const result = yield* evaluateInput({ ...item.request, agent: item.agent, guards: item.guards }).pipe(
               Effect.catchTag("Session.NotFoundError", () => Effect.undefined),
             )
             if (result?.effect !== "allow") continue
