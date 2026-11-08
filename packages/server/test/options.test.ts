@@ -40,3 +40,13 @@ test("accepts an embedder fetch and rejects other values", () => {
   expect(Option.getOrThrow(decode({ fetch })).fetch).toBe(fetch)
   expect(Option.isNone(decode({ fetch: "https://example.com" }))).toBe(true)
 })
+
+test("accepts an experimental process wrapper", () => {
+  expect(Option.getOrThrow(decode({ experimental: { process: { wrapper: ["w", "--"] } } })).experimental).toEqual({
+    process: { wrapper: ["w", "--"] },
+  })
+})
+
+test("rejects a non-string wrapper entry", () => {
+  expect(Option.isNone(decode({ experimental: { process: { wrapper: [1] } } }))).toBe(true)
+})

@@ -22,6 +22,7 @@ import { ConfigManaged } from "./config/managed.js"
 import { ManagedPolicy } from "./managed-policy.js"
 import { Connection } from "@opencode/schema/connection"
 import { WellKnown } from "./wellknown.js"
+import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { AppProcess } from "@opencode/util/process"
 import { ChildProcess } from "effect/process"
 
@@ -253,7 +254,12 @@ export const layer = (options?: Options) =>
           .run(ChildProcess.make("plutil", ["-convert", "json", "-o", "-", plist], { stdin: "ignore" }), {
             timeout: "10 seconds",
           })
-          .pipe(Effect.flatMap(AppProcess.requireSuccess), Effect.option)
+          .pipe(
+            Effect.flatMap(AppProcess.requireSuccess),
+            // Never wrapped: a sandbox denial here would silently drop managed policy.
+            Effect.provideService(CrossSpawnSpawner.Bypass, true),
+            Effect.option,
+          )
         if (Option.isNone(result)) {
           yield* Effect.logWarning("failed to convert managed preferences", { source: plist })
           return []

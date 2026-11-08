@@ -51,5 +51,19 @@ export const ServerOptions = Schema.Struct({
       fff: Schema.optional(Schema.Boolean),
     }),
   ),
+  experimental: Schema.optional(
+    Schema.Struct({
+      process: Schema.optional(
+        Schema.Struct({
+          /**
+           * Argv prefix for every process the host spawner starts, for plugging in an external sandbox. The first
+           * entry is the program, resolved through `PATH`; the rest precede the original command and its arguments.
+           * Empty or absent leaves processes unchanged.
+           */
+          wrapper: Schema.optional(Schema.Array(Schema.String)),
+        }),
+      ),
+    }),
+  ),
 })
 export type ServerOptions = typeof ServerOptions.Type

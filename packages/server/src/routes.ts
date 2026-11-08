@@ -2,6 +2,7 @@ import { Database } from "@opencode/core/database/database"
 import { V1Migration } from "@opencode/core/database/v1-migration"
 import { App } from "@opencode/core/app"
 import { LayerNode } from "@opencode/util/effect/layer-node"
+import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { Node } from "@opencode/util/effect/app-node"
 import { fetchLayer, httpClient, httpFetch } from "@opencode/util/effect/app-node-platform"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
@@ -142,6 +143,7 @@ function makeRoutes<AuthError, AuthServices>(
     ),
     InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project: options.config?.project })),
     ShellSelect.node.replace(ShellSelect.configured({ gitbash: options.windows?.gitbash })),
+    CrossSpawnSpawner.node.replace(CrossSpawnSpawner.configured({ wrapper: options.experimental?.process?.wrapper })),
     Mcp.node.replace(
       Mcp.configured({
         clientInfo: {
