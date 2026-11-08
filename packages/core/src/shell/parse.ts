@@ -200,6 +200,7 @@ const FIND_ACTIONS = new Set([
   ...["-exec", "-execdir", "-ok", "-okdir"],
   ...["-delete", "-fls", "-fprint", "-fprint0", "-fprintf"],
 ])
+const BACKSLASH = /\\(?![;\n])/
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/
 
 export function scan(command: string, shell: string, cwd: string): Effect.Effect<Result, Error> {
@@ -291,8 +292,12 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
       const exact =
         inner !== undefined && (!narrow || /[*?]/.test(narrow) || !Wildcard.match(item.resource, `${narrow} *`))
       const saved = inner === undefined ? save : exact ? item.resource : `${narrow} *`
-      // A * or ? from the command would act as a wildcard in the save, so the request offers no "always" instead.
+      // A * or ? from the command would act as a wildcard in the save, so the request offers no "always" instead. This
+      // also covers a head holding one, so the bare-prefix fallback kept verbatim from #61442 above is never saved.
       if (/[*?]/.test(head) || /[*?]/.test(exact ? saved : saved.slice(0, -1))) output.unsavable = true
+      // Rules match `\` as `/`, so `FOO=a\ b git status` would also cover `FOO=a/ b git status`, which runs `b`. An
+      // escaped `;` or line break cannot change what runs that way, so `find … \;` keeps "always".
+      if (BACKSLASH.test(head) || (inner !== undefined && BACKSLASH.test(saved))) output.unsavable = true
       output.commands.push({
         resource: item.resource,
         save: saved,
@@ -681,5 +686,9 @@ function wrapped(words: string[], raw: string[]): string[] | null | undefined {
   if (start >= words.length || words.slice(1, start + 1).some((word) => word.startsWith("-"))) return null
   const inner = wrapped(words.slice(start), raw.slice(start))
   if (inner === null) return null
-  return [...raw.slice(0, start), ...(inner ?? prefix(raw.slice(start, start + PREFIX_LENGTH)))]
+  // Arity is looked up by the unquoted words, so `'git' push` keeps `push`, while the save keeps the source text.
+  return [
+    ...raw.slice(0, start),
+    ...(inner ?? raw.slice(start, start + prefix(words.slice(start, start + PREFIX_LENGTH)).length)),
+  ]
 }

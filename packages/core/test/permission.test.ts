@@ -870,7 +870,8 @@ describe("shell always saves through wrapper commands", () => {
   const request = (command: string) =>
     Effect.gen(function* () {
       const parsed = yield* ShellParse.scan(command, "bash", "/project")
-      // As the shell tool does, a request without a save offers no "always".
+      // Mirrors the request the shell tool builds (tool/plugin/shell.ts) without spawning a shell; a request without a
+      // save offers no "always".
       return assertion({
         action: "shell",
         resources: parsed.commands.map((item) => item.resource),
@@ -897,6 +898,8 @@ describe("shell always saves through wrapper commands", () => {
         ["bash script.sh", "bash script.sh *"],
         ["bash script.sh a b", "bash script.sh *"],
         ["find . -name x", "find *"],
+        ["/usr/bin/env git status", "/usr/bin/env git status *"],
+        ["timeout 10 'git' push origin", "timeout 10 'git' push *"],
         // A wildcard only in what the wrapper runs, past the saved prefix, keeps "always".
         ["timeout 5 rm *.tmp", "timeout 5 rm *"],
       ] as const)
@@ -919,12 +922,15 @@ describe("shell always saves through wrapper commands", () => {
         "command -v rm",
         "find . -exec rm {} \\;",
         "find . -delete",
+        // Joined words would not match the source spacing.
+        "timeout  10 git status",
+        "sudo timeout 10 bash -c x",
       ])
         expect((yield* request(command)).save, command).toEqual([command])
     }),
   )
 
-  it.live("offers no always when the save would hold a wildcard from the command", () =>
+  it.live("offers no always when the save would hold a wildcard or an escape from the command", () =>
     Effect.gen(function* () {
       yield* setup([{ action: "shell", resource: "*", effect: "ask" }])
       const service = yield* Permission.Service
@@ -937,6 +943,12 @@ describe("shell always saves through wrapper commands", () => {
         "bash -c 'rm ?'",
         "FOO=* git status",
         ">out* printf hello",
+        // Rules match `\` as `/`, so these would also cover `FOO=a/ b git status`, which runs `b`, and the like.
+        "FOO=a\\ b git status",
+        "PAGER=x\\ sh git log",
+        "sudo -n rm -rf a\\ b",
+        "env A=x\\ y rm f",
+        "FOO=a\\' b git status",
       ]) {
         const input = yield* request(command)
         expect(input.save, command).toBeUndefined()
