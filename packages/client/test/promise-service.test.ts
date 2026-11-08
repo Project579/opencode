@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Service, ServiceAutostartDisabledError, type EnsureReason } from "../src/promise/service"
+import { Service, ServiceUnavailableError, type EnsureReason } from "../src/promise/service"
 import { withEnsureTiming } from "../src/service-timing"
 import {
   catchesSigterm,
@@ -359,7 +359,7 @@ test.skipIf(!catchesSigterm)(
   20_000,
 )
 
-test("adopts a registered service of another version when autostart is off", async () => {
+test("adopts a registered service of another version without service management", async () => {
   await using fixture = await serviceFixture()
   const registration = fixture.registration
   const existing = fixture.spawn("compatible")
@@ -370,7 +370,7 @@ test("adopts a registered service of another version when autostart is off", asy
   const endpoint = await ensure({
     file: registration,
     version: "test",
-    autostart: false,
+    manage: false,
     command: fixture.command("delayed", "10"),
     onStart: (reason) => starts.push(reason),
   })
@@ -381,22 +381,23 @@ test("adopts a registered service of another version when autostart is off", asy
   expect(await Bun.file(registration).json()).toEqual(original)
 })
 
-test("fails without starting a service when none is registered and autostart is off", async () => {
+test("fails without starting a service when none is registered without service management", async () => {
   await using fixture = await serviceFixture()
   const registration = fixture.registration
 
   const error = await ensure({
     file: registration,
-    autostart: false,
+    manage: false,
     command: fixture.command("record-start"),
   }).catch((cause: unknown) => cause)
 
-  expect(error).toBeInstanceOf(ServiceAutostartDisabledError)
+  expect(error).toBeInstanceOf(ServiceUnavailableError)
+  expect(error).toMatchObject({ reason: "missing" })
   expect(await Bun.file(registration + ".started").exists()).toBe(false)
   expect(await Bun.file(registration).exists()).toBe(false)
 })
 
-test("keeps retrying an unresponsive registered service when autostart is off", async () => {
+test("keeps retrying an unresponsive registered service without service management", async () => {
   await using fixture = await serviceFixture()
   const registration = fixture.registration
   const existing = fixture.spawn("hanging")
@@ -405,14 +406,38 @@ test("keeps retrying an unresponsive registered service when autostart is off", 
 
   const error = await Service.ensure(
     withEnsureTiming(
-      { file: registration, version: "test", autostart: false, command: fixture.command("record-start") },
+      { file: registration, version: "test", manage: false, command: fixture.command("record-start") },
       { pollInterval: 10, requestTimeout: 50, promiseTimeout: 600 },
     ),
   ).catch((cause: unknown) => cause)
 
-  expect(error).toBeInstanceOf(ServiceAutostartDisabledError)
+  expect(error).toBeInstanceOf(ServiceUnavailableError)
+  expect(error).toMatchObject({ reason: "unresponsive" })
   expect((await Bun.file(registration + ".requests").text()).trim().split("\n").length).toBeGreaterThan(3)
   expect(existing.exitCode).toBe(null)
+  expect(await Bun.file(registration + ".started").exists()).toBe(false)
+  expect(await Bun.file(registration).json()).toEqual(original)
+})
+
+test("fails on a stale registration whose process is gone without service management", async () => {
+  await using fixture = await serviceFixture()
+  const registration = fixture.registration
+  const crashed = fixture.spawn("graceful")
+  await fixture.waitForFile()
+  const original = await Bun.file(registration).json()
+  crashed.kill("SIGKILL")
+  await crashed.exited
+
+  const error = await Service.ensure(
+    withEnsureTiming(
+      { file: registration, version: "test", manage: false, command: fixture.command("record-start") },
+      // The deadline outlasts the test timeout, so only the stale-registration check can end this call in time.
+      { pollInterval: 10, requestTimeout: 50, promiseTimeout: 30_000 },
+    ),
+  ).catch((cause: unknown) => cause)
+
+  expect(error).toBeInstanceOf(ServiceUnavailableError)
+  expect(error).toMatchObject({ reason: "unresponsive" })
   expect(await Bun.file(registration + ".started").exists()).toBe(false)
   expect(await Bun.file(registration).json()).toEqual(original)
 })

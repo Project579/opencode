@@ -12,10 +12,10 @@ export const password = Config.Redacted("OPENCODE_PASSWORD").pipe(
   Config.withDefault(undefined),
 )
 
-// Experimental: `0` or `false` makes the CLI only connect to a running local
-// service, never start, replace, or signal one. Any other value keeps automatic start.
+// Experimental: `0` or `false` (any case) makes the CLI only connect to a running
+// local service, never start, replace, or signal one. Any other value keeps automatic start.
 export const serviceAutostart = Config.String("OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART").pipe(
-  Config.map((value) => value !== "0" && value !== "false"),
+  Config.map((value) => !(value === "0" || value.toLowerCase() === "false")),
   Config.withDefault(true),
 )
 

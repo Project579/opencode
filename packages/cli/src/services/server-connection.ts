@@ -68,11 +68,12 @@ export const resolve = Effect.fn("cli.server-connection.resolve")(function* (arg
 function managedService(options: EnsureOptions) {
   const reconnectOptions = { ...options, version: undefined }
   return {
-    reconnect: () => Service.ensure(reconnectOptions),
+    reconnect: () => ServiceConfig.ensure(reconnectOptions),
     restart: () =>
       Effect.gen(function* () {
+        yield* ServiceConfig.requireManaged(options)
         yield* Service.stop({ file: options.file, pty: "handoff" })
-        yield* Service.ensure(reconnectOptions)
+        yield* ServiceConfig.ensure(reconnectOptions)
       }),
   }
 }
@@ -87,15 +88,15 @@ export const shutdownPersistentPty = Effect.fn("cli.server-connection.shutdown-p
 })
 
 const resolveManaged = Effect.fnUntraced(function* (options: EnsureOptions, mismatch: NonNullable<Args["mismatch"]>) {
-  if (mismatch === "replace") return yield* Service.ensure(options)
-  if (mismatch === "ignore") return yield* Service.ensure({ ...options, version: undefined })
+  if (mismatch === "replace") return yield* ServiceConfig.ensure(options)
+  if (mismatch === "ignore") return yield* ServiceConfig.ensure({ ...options, version: undefined })
 
   const compatible = yield* Service.discover(options)
   if (compatible !== undefined) return compatible
   const existing = yield* Service.discover({ ...options, version: undefined })
   if (existing !== undefined)
     return yield* Effect.fail(new Error("Background server version does not match this client"))
-  return yield* Service.ensure(options)
+  return yield* ServiceConfig.ensure(options)
 })
 
 function connectError(endpoint: Endpoint, cause: unknown) {

@@ -172,6 +172,30 @@ serviceTest(
   120_000,
 )
 
+serviceTest(
+  "with automatic start off, start, restart and config changes refuse and leave the running service alone",
+  async () => {
+    await using home = await serviceHome()
+    await ensure(home)
+    const original = await settled(home)
+    const unmanaged = { ...home, env: { ...home.env, OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "0" } }
+
+    await expect(cli(unmanaged, "service", "restart")).rejects.toThrow("Automatic start is off")
+    await expect(cli(unmanaged, "service", "start")).rejects.toThrow("Automatic start is off")
+    await expect(cli(unmanaged, "service", "set", "port", String(home.port + 1))).rejects.toThrow(
+      "Automatic start is off",
+    )
+
+    expect(await servers(home)).toEqual([original.pid])
+    expect((await snapshot(home)).info).toEqual(original)
+    expect(await Bun.file(path.join(home.root, "config", "service-local.json")).json()).toMatchObject({
+      port: home.port,
+    })
+    await stopped(home)
+  },
+  120_000,
+)
+
 type Home = Awaited<ReturnType<typeof serviceHome>>
 type Snapshot = Awaited<ReturnType<typeof snapshot>>
 

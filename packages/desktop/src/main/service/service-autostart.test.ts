@@ -10,6 +10,8 @@ describe("serviceAutostart", () => {
     ["no", true],
     ["0", false],
     ["false", false],
+    ["FALSE", false],
+    ["False", false],
   ])("OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART=%p starts the service: %p", (value, expected) => {
     expect(serviceAutostart(value)).toBe(expected)
   })

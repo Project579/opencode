@@ -24,13 +24,15 @@ test("session environment omits server credentials", () => {
   expect(environment.OPENCODE_SESSION_ENV_TEST).toBe("included")
 })
 
-test("service autostart turns off only for 0 or false", () => {
+test("service autostart turns off only for 0 or false in any case", () => {
   const autostart = (env: Record<string, string>) =>
     Effect.runSync(Env.serviceAutostart.parse(ConfigProvider.fromEnv({ env })))
 
   expect(autostart({})).toBe(true)
   expect(autostart({ OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "0" })).toBe(false)
   expect(autostart({ OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "false" })).toBe(false)
+  expect(autostart({ OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "FALSE" })).toBe(false)
+  expect(autostart({ OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "False" })).toBe(false)
   expect(autostart({ OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "1" })).toBe(true)
   expect(autostart({ OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "" })).toBe(true)
   expect(autostart({ OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "no" })).toBe(true)

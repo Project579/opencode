@@ -2,7 +2,7 @@ import { NodeFileSystem, NodeServices } from "@effect/platform-node"
 import { Global } from "@opencode/util/global"
 import { OPENCODE_VERSION } from "../src/version"
 import { expect, test } from "bun:test"
-import { Console, Effect, FileSystem, Option, Scope } from "effect"
+import { ConfigProvider, Console, Effect, FileSystem, Option, Scope } from "effect"
 import { Command } from "effect/cli"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -73,6 +73,28 @@ test("service options only require a matching version when requested", async () 
   try {
     expect((await runPromise(ServiceConfig.options())).version).toBeUndefined()
     expect((await runPromise(ServiceConfig.options({ checkVersion: true }))).version).toBe(OPENCODE_VERSION)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test("service options carry the automatic start setting", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-options-"))
+  const layer = Global.layerWith({ config: path.join(root, "config"), state: path.join(root, "state") })
+  const manage = (env: Record<string, string>) =>
+    Effect.runPromise(
+      ServiceConfig.options().pipe(
+        Effect.provide(layer),
+        Effect.provide(NodeFileSystem.layer),
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+        Effect.scoped,
+        Effect.map((options) => options.manage),
+      ),
+    )
+
+  try {
+    expect(await manage({})).toBe(true)
+    expect(await manage({ OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART: "0" })).toBe(false)
   } finally {
     await fs.rm(root, { recursive: true, force: true })
   }

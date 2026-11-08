@@ -1,6 +1,6 @@
 import { readFile, rm } from "node:fs/promises"
 import {
-  ServiceAutostartDisabledError,
+  ServiceUnavailableError,
   type DiscoverOptions,
   type Endpoint,
   type Info,
@@ -36,9 +36,11 @@ export async function ensure(options: EnsureOptions = {}): Promise<Endpoint> {
   const timing = ensureTiming(options)
   const deadline = Date.now() + timing.promiseTimeout
   const pool = contenderPool(timing)
-  // Without autostart, nothing may replace the registered service, so no version requirement applies.
-  const requirement = options.autostart === false ? {} : options
+  // Without management, nothing may replace the registered service, so no version requirement applies.
+  const requirement = options.manage === false ? {} : options
   let timeouts: { readonly info: Info; readonly count: number } | undefined
+  // Consecutive probes of one registration that were refused or answered by another process.
+  let refused: { readonly info: Info; readonly count: number } | undefined
   let announced = false
 
   const announce = (reason: "missing" | "version-mismatch", previousVersion?: string) => {
@@ -61,19 +63,24 @@ export async function ensure(options: EnsureOptions = {}): Promise<Endpoint> {
       if (Date.now() >= deadline)
         throw (
           pool.failure() ??
-          (options.autostart === false
-            ? new ServiceAutostartDisabledError()
+          (options.manage === false
+            ? new ServiceUnavailableError("unresponsive")
             : new Error("Timed out waiting for the background service to start"))
         )
       const registration = await registered(options.file, timing.requestTimeout)
+      const info = registration.info
+      refused =
+        info !== undefined && registration.service === undefined && !registration.timedOut
+          ? { info, count: refused !== undefined && same(refused.info, info) ? refused.count + 1 : 1 }
+          : undefined
       if (registration.timedOut && registration.info !== undefined) {
         timeouts = {
           info: registration.info,
           count: timeouts !== undefined && same(timeouts.info, registration.info) ? timeouts.count + 1 : 1,
         }
-        if (timeouts.count === 3 && options.autostart === false)
+        if (timeouts.count === 3 && options.manage === false)
           console.warn("Background service is unresponsive; automatic start is off, so it is not replaced")
-        if (timeouts.count >= 3 && options.autostart !== false) {
+        if (timeouts.count >= 3 && options.manage !== false) {
           announce("missing")
           console.warn("Background service is unresponsive; recovery cannot preserve persistent terminals")
           await PtyHandoff.clear(options.file ?? fallback())
@@ -103,9 +110,11 @@ export async function ensure(options: EnsureOptions = {}): Promise<Endpoint> {
       } else {
         const failed = pool.reap()
         if (failed !== undefined) throw failed
-        // A registered service that does not answer yet may still be starting; keep polling it until the deadline.
-        if (options.autostart === false && registration.info === undefined) throw new ServiceAutostartDisabledError()
-        if (options.autostart !== false && pool.shouldRecruit(registration.info !== undefined)) {
+        if (options.manage === false && info === undefined) throw new ServiceUnavailableError("missing")
+        // A slow service keeps polling until the deadline; a refused or foreign answer is a stale registration.
+        if (options.manage === false && refused !== undefined && refused.count >= 3)
+          throw new ServiceUnavailableError("unresponsive")
+        if (options.manage !== false && pool.shouldRecruit(registration.info !== undefined)) {
           announce("missing")
           pool.add(await spawnContender())
         }

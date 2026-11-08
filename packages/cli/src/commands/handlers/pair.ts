@@ -24,7 +24,7 @@ export default Runtime.handler(
       // Changing the setting restarts the service, and the ensure below starts it again with the tunnel.
       yield* ServiceConfig.set("remote", "true")
     }
-    const endpoint = yield* Service.ensure(yield* ServiceConfig.options())
+    const endpoint = yield* ServiceConfig.ensure(yield* ServiceConfig.options())
     const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     const urls = yield* pairingURLs(client, input)
     const pairing = yield* Effect.tryPromise(() => client.server.pair())

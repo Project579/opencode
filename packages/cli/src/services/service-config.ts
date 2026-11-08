@@ -1,7 +1,7 @@
 import { Global } from "@opencode/util/global"
 import { OPENCODE_CHANNEL, OPENCODE_VERSION } from "../version"
 import { Hash } from "@opencode/util/hash"
-import { Service } from "@opencode/client/effect/service"
+import { Service, ServiceUnavailableError, type EnsureOptions } from "@opencode/client/effect/service"
 import { Effect, FileSystem, Option, Schedule, Schema } from "effect"
 import { randomBytes } from "crypto"
 import path from "path"
@@ -149,8 +149,28 @@ export const options = Effect.fnUntraced(function* (input: { readonly checkVersi
     version: input.checkVersion ? OPENCODE_VERSION : undefined,
     env: processEnv((yield* read()).env),
     command: [...selfCommand(), "serve", "--service"],
-    autostart: yield* Env.serviceAutostart,
+    manage: yield* Env.serviceAutostart,
   }
+})
+
+const manualHint =
+  "OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART turns automatic start off; start or restart the service with your service manager."
+
+/** `Service.ensure`, explaining how to recover when automatic start is off. */
+export const ensure = Effect.fnUntraced(function* (options: EnsureOptions) {
+  return yield* Service.ensure(options).pipe(
+    Effect.mapError((error) =>
+      error instanceof ServiceUnavailableError ? new Error(`${error.message} ${manualHint}`, { cause: error }) : error,
+    ),
+  )
+})
+
+/** Refuse a command that would stop the service for something else to start again while automatic start is off. */
+export const requireManaged = Effect.fnUntraced(function* (options: EnsureOptions) {
+  if (options.manage !== false) return
+  return yield* Effect.fail(
+    new Error(`Automatic start is off, so OpenCode does not start or restart the local service. ${manualHint}`),
+  )
 })
 
 export const read = Effect.fn("cli.service-config.read")(function* () {
@@ -253,6 +273,8 @@ export const set = Effect.fn("cli.service-config.set")(function* (key: string, v
   const selected = configKey(key)
   if (selected !== "env" && nestedValue !== undefined)
     throw new Error(`Usage: opencode service set ${selected} <value>`)
+  // Every change except `disabled` stops the service so the next client starts it with the new configuration.
+  if (selected !== "disabled") yield* requireManaged(yield* options())
   switch (selected) {
     case "disabled": {
       if (value !== "true" && value !== "false") throw new Error("Disabled must be true or false")
@@ -315,6 +337,8 @@ export const set = Effect.fn("cli.service-config.set")(function* (key: string, v
 export const unset = Effect.fn("cli.service-config.unset")(function* (key: string, name?: string) {
   const selected = configKey(key)
   if (selected !== "env" && name !== undefined) throw new Error(`Usage: opencode service unset ${selected}`)
+  // Every change except `disabled` stops the service so the next client starts it with the new configuration.
+  if (selected !== "disabled") yield* requireManaged(yield* options())
   switch (selected) {
     case "disabled": {
       const { disabled: _disabled, ...next } = yield* read()

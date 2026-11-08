@@ -33,22 +33,29 @@ export type EnsureOptions = DiscoverOptions & {
   /** Called once before spawning a new service process. */
   readonly onStart?: (reason: EnsureReason, previousVersion?: string) => void
   /**
-   * Start or replace the service when needed. Defaults to `true`. When `false`, only connect: adopt a registered
-   * service that answers with a compatible health response whatever its version, and never spawn, replace, or
-   * signal a service.
+   * Start, replace, and signal the service as needed. Defaults to `true`. When `false`, only connect: adopt a
+   * registered service that answers with a compatible health response whatever its version, and fail with
+   * `ServiceUnavailableError` instead of spawning, replacing, or signalling a service.
    */
-  readonly autostart?: boolean
+  readonly manage?: boolean
 }
 
-/** No usable local service is running and automatic start is off. */
-export class ServiceAutostartDisabledError extends Error {
-  readonly _tag = "ServiceAutostartDisabledError"
+/** Why `ensure()` without service management found no usable service. */
+export type ServiceUnavailableReason = "missing" | "unresponsive"
 
-  constructor() {
+/** No usable local service is running and `ensure()` was told not to manage one. */
+export class ServiceUnavailableError extends Error {
+  readonly _tag = "ServiceUnavailableError"
+  readonly reason: ServiceUnavailableReason
+
+  constructor(reason: ServiceUnavailableReason) {
     super(
-      "The local OpenCode service is not running and automatic start is off (OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART). Start the service, or unset OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART to let OpenCode start it.",
+      reason === "missing"
+        ? "The local OpenCode service is not running and automatic start is off."
+        : "The local OpenCode service is registered but not responding, and automatic start is off.",
     )
-    this.name = "ServiceAutostartDisabledError"
+    this.name = "ServiceUnavailableError"
+    this.reason = reason
   }
 }
 

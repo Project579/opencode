@@ -1,10 +1,5 @@
 import { Effect, FileSystem, Option, Schedule, Schema } from "effect"
-import {
-  ServiceAutostartDisabledError,
-  type DiscoverOptions,
-  type EnsureOptions,
-  type StopOptions,
-} from "../service.js"
+import { ServiceUnavailableError, type DiscoverOptions, type EnsureOptions, type StopOptions } from "../service.js"
 import { contenderPool, spawnServiceContender } from "../service-contender.js"
 import { defaultEnsureTiming, ensureTiming, type EnsureTiming } from "../service-timing.js"
 import { matchesVersion } from "../service-version.js"
@@ -50,14 +45,16 @@ export const incumbent = Effect.fn("service.incumbent")(function* (
 // Idempotent ensure-running: reuses a healthy compatible server, replaces a
 // version-mismatched one, and otherwise spawns small contenders until a server
 // becomes discoverable. A contender is never killed merely for slow startup.
-// With `autostart: false` it only adopts what is registered: no spawn, replacement, or signal.
+// With `manage: false` it only adopts what is registered: no spawn, replacement, or signal.
 /** Ensure a healthy, compatible local service is running. */
 export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOptions = {}) {
   const timing = ensureTiming(options)
   const pool = contenderPool(timing)
-  // Without autostart, nothing may replace the registered service, so no version requirement applies.
-  const requirement = options.autostart === false ? {} : options
+  // Without management, nothing may replace the registered service, so no version requirement applies.
+  const requirement = options.manage === false ? {} : options
   let timeouts: { readonly info: Info; readonly count: number } | undefined
+  // Consecutive probes of one registration that were refused or answered by another process.
+  let refused: { readonly info: Info; readonly count: number } | undefined
   let announced = false
   const announce = (reason: "missing" | "version-mismatch", previousVersion?: string) =>
     Effect.sync(() => {
@@ -80,14 +77,18 @@ export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOpti
     const registration = yield* registered(options.file, timing.requestTimeout)
     const info = registration.info
     const service = registration.service
+    refused =
+      info !== undefined && service === undefined && !registration.timedOut
+        ? { info, count: refused !== undefined && same(refused.info, info) ? refused.count + 1 : 1 }
+        : undefined
     if (registration.timedOut && info !== undefined) {
       timeouts = {
         info,
         count: timeouts !== undefined && same(timeouts.info, info) ? timeouts.count + 1 : 1,
       }
-      if (timeouts.count === 3 && options.autostart === false)
+      if (timeouts.count === 3 && options.manage === false)
         yield* Effect.logWarning("Background service is unresponsive; automatic start is off, so it is not replaced")
-      if (timeouts.count >= 3 && options.autostart !== false) {
+      if (timeouts.count >= 3 && options.manage !== false) {
         yield* announce("missing")
         yield* Effect.logWarning("Background service is unresponsive; recovery cannot preserve persistent terminals")
         yield* Effect.tryPromise(() => PtyHandoff.clear(options.file ?? fallback()))
@@ -117,9 +118,11 @@ export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOpti
 
     const failed = pool.reap()
     if (failed !== undefined) return yield* Effect.fail(failed)
-    if (options.autostart === false) {
-      // A registered service that does not answer yet may still be starting; keep polling it until the deadline.
-      if (info === undefined) return yield* Effect.fail(new ServiceAutostartDisabledError())
+    if (options.manage === false) {
+      if (info === undefined) return yield* Effect.fail(new ServiceUnavailableError("missing"))
+      // A slow service keeps polling until the deadline; a refused or foreign answer is a stale registration.
+      if (refused !== undefined && refused.count >= 3)
+        return yield* Effect.fail(new ServiceUnavailableError("unresponsive"))
       return Option.none()
     }
     if (pool.shouldRecruit(info !== undefined)) {
@@ -139,8 +142,8 @@ export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOpti
   if (Option.isNone(found))
     return yield* Effect.fail(
       pool.failure() ??
-        (options.autostart === false
-          ? new ServiceAutostartDisabledError()
+        (options.manage === false
+          ? new ServiceUnavailableError("unresponsive")
           : new Error("Timed out waiting for the background service to start")),
     )
   return found.value.endpoint

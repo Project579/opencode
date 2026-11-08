@@ -10,6 +10,7 @@ export default Runtime.handler(
   Commands.commands.service.commands.restart,
   Effect.fn("cli.service.restart")(function* () {
     const options = yield* ServiceConfig.options()
+    yield* ServiceConfig.requireManaged(options)
     // Keep this explicit: automatic service replacement must preserve terminals.
     yield* ServerConnection.shutdownPersistentPty(options).pipe(Effect.ignore)
     yield* Service.stop(options)

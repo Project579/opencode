@@ -63,7 +63,7 @@ const ensure = Effect.fn("BackgroundService.ensure")(function* (mode: Background
     setup.client.Service.ensure({
       file: setup.file,
       version,
-      autostart: setup.autostart,
+      manage: setup.manage,
       // A fixed port makes a second contender fail to bind and back off; port 0 never collides, so two
       // services could boot against the same database.
       command: [
@@ -78,6 +78,11 @@ const ensure = Effect.fn("BackgroundService.ensure")(function* (mode: Background
 
   const service = yield* Effect.tryPromise(() =>
     run().catch((error) => {
+      if (error instanceof setup.client.ServiceUnavailableError)
+        throw new Error(
+          `${error.message} OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART turns automatic start off; start or restart the service with your service manager.`,
+          { cause: error },
+        )
       if (!shouldRetryEnsure(setup.version, error instanceof Error ? error.message : String(error))) throw error
 
       return run(setup.cli.version)
@@ -88,8 +93,15 @@ const ensure = Effect.fn("BackgroundService.ensure")(function* (mode: Background
 
   // Only packaged and isolated builds run a staged copy; any other binary sits in the source tree.
   // Keep both the bundled stage and the running server's stage so its executable stays on disk. This runs only
-  // once `Service.ensure` settled which server runs, never for a probed one it may still replace.
-  if (mode === "initial" && (app.isPackaged || setup.isolated) && setup.cli.binary && ready.runningVersion)
+  // once `Service.ensure` settled which server runs, never for a probed one it may still replace. Without service
+  // management the stages stay: an externally supervised service may run any of them.
+  if (
+    mode === "initial" &&
+    setup.manage &&
+    (app.isPackaged || setup.isolated) &&
+    setup.cli.binary &&
+    ready.runningVersion
+  )
     runFork(
       cleanStages(setup.cli.binary, { keep: keptStages(setup.cli.version, ready.runningVersion) }).pipe(
         Effect.catch((error) => Effect.logError("failed to clean staged v2 CLIs", { error })),
@@ -125,7 +137,7 @@ const prepare = Effect.fn("BackgroundService.prepare")(function* (mode: Backgrou
     file,
     isolated,
     version,
-    autostart: serviceAutostart(process.env.OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART),
+    manage: serviceAutostart(process.env.OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART),
   }
 })
 
