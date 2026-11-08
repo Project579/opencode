@@ -241,7 +241,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
               }
               escapeKey="reject"
               fullscreen
-              optionsSlot={{ sessionID: props.request.sessionID, requestID: props.request.id }}
+              slots={{ sessionID: props.request.sessionID, requestID: props.request.id }}
               onSelect={(option) => {
                 if (option === "always") {
                   reply("always")
@@ -418,8 +418,11 @@ type QuestionProps<T extends Record<string, string>> = {
   options: T
   escapeKey?: keyof T
   fullscreen?: boolean
-  /** Publishes the options row as `experimental.session.permission.options`, so a plugin may replace it. */
-  optionsSlot?: { readonly sessionID: string; readonly requestID: string }
+  /**
+   * Publishes the body and the options row as `experimental.session.permission.body` and
+   * `experimental.session.permission.options`, so a plugin may replace them.
+   */
+  slots?: { readonly sessionID: string; readonly requestID: string }
   onSelect: (option: keyof T) => void
 }
 
@@ -434,24 +437,38 @@ export function SessionQuestion<const T extends Record<string, string>>(props: Q
   const narrow = createMemo(() => dimensions().width < 80)
   const id = () => props.id ?? "session.permission"
   const options = () => <QuestionOptions question={props} id={id()} keys={keys} store={store} setStore={setStore} />
+  const body = () => (typeof props.body === "function" ? props.body(store.selected) : props.body)
   useRenderer()
 
-  // Ctrl+C stays with the prompt even when a plugin replaces the options row, so it never exits the app and leaves
-  // the request pending.
+  // Ctrl+C and fullscreen stay with the prompt even when a plugin replaces the options row: Ctrl+C so it never exits
+  // the app and leaves the request pending, fullscreen so a plugin's body can still use the whole screen.
   Keymap.createLayer(() => ({
     mode: "base",
-    commands: props.escapeKey
-      ? [
-          {
-            id: "app.exit",
-            title: "Reject permission",
-            group: props.group ?? "Permission",
-            bind: false as const,
-            run: () => dismissQuestion(props, store, setStore),
-          },
-        ]
-      : [],
-    bindings: props.escapeKey ? ["app.exit"] : [],
+    commands: [
+      ...(props.escapeKey
+        ? [
+            {
+              id: "app.exit",
+              title: "Reject permission",
+              group: props.group ?? "Permission",
+              bind: false as const,
+              run: () => dismissQuestion(props, store, setStore),
+            },
+          ]
+        : []),
+      ...(props.fullscreen
+        ? [
+            {
+              id: "permission.prompt.fullscreen",
+              title: "Toggle permission fullscreen",
+              group: props.group ?? "Permission",
+              bind: false as const,
+              run: () => setStore("expanded", (value) => !value),
+            },
+          ]
+        : []),
+    ],
+    bindings: [...(props.escapeKey ? ["app.exit"] : []), ...(props.fullscreen ? ["permission.prompt.fullscreen"] : [])],
   }))
 
   const content = () => (
@@ -492,7 +509,25 @@ export function SessionQuestion<const T extends Record<string, string>>(props: Q
             {props.header}
           </box>
         </Show>
-        {typeof props.body === "function" ? props.body(store.selected) : props.body}
+        <Show when={props.slots} fallback={body()}>
+          {(slot) => (
+            <Slot
+              path="experimental.session.permission.body"
+              input={{
+                get sessionID() {
+                  return slot().sessionID
+                },
+                get requestID() {
+                  return slot().requestID
+                },
+                // A fragment so the host body follows the selected option wherever the claim renders it.
+                fallback: () => <>{body()}</>,
+              }}
+            >
+              {body()}
+            </Slot>
+          )}
+        </Show>
       </box>
       <box
         flexDirection={narrow() ? "column" : "row"}
@@ -506,7 +541,7 @@ export function SessionQuestion<const T extends Record<string, string>>(props: Q
         justifyContent={narrow() ? "flex-start" : "space-between"}
         alignItems={narrow() ? "flex-start" : "center"}
       >
-        <Show when={props.optionsSlot} fallback={options()}>
+        <Show when={props.slots} fallback={options()}>
           {(slot) => (
             <Slot path="experimental.session.permission.options" input={slot()}>
               {options()}
@@ -537,7 +572,8 @@ function dismissQuestion<const T extends Record<string, string>>(
 }
 
 // The options row and the keys that drive it, kept together so a plugin replacing the row removes its keymap too.
-// Ctrl+C is the exception: `SessionQuestion` keeps it so a replaced row cannot exit the app.
+// Ctrl+C and fullscreen are the exceptions: `SessionQuestion` keeps them so a replaced row cannot exit the app and
+// the prompt can still go fullscreen.
 function QuestionOptions<const T extends Record<string, string>>(props: {
   question: QuestionProps<T>
   id: string
@@ -554,17 +590,6 @@ function QuestionOptions<const T extends Record<string, string>>(props: {
   Keymap.createLayer(() => ({
     mode: "base",
     commands: [
-      ...(props.question.fullscreen
-        ? [
-            {
-              id: "permission.prompt.fullscreen",
-              title: "Toggle permission fullscreen",
-              group: group(),
-              bind: false as const,
-              run: () => props.setStore("expanded", (value) => !value),
-            },
-          ]
-        : []),
       ...(props.keys.length > 1
         ? [
             {
@@ -597,7 +622,6 @@ function QuestionOptions<const T extends Record<string, string>>(props: {
         ? [{ bind: "escape", title: "Reject permission", group: group(), run: dismiss }]
         : []),
     ],
-    bindings: props.question.fullscreen ? ["permission.prompt.fullscreen"] : [],
   }))
 
   return (

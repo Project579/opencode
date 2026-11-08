@@ -56,14 +56,65 @@ test("a replace claim swaps the options and their keys while the request stays v
   expect(setup.requests).toHaveLength(0)
 })
 
-test.each([
-  ["without a plugin claim", false],
-  ["under a replace claim", true],
-] as const)("ctrl+c at a permission prompt %s rejects the request instead of exiting", async (_name, claimed) => {
+test("a body claim replaces the request's body while the header and options stay", async () => {
+  await using plugin = await copyPlugin("permission-body")
+  await using state = await tmpdir()
+  await using setup = await createPermissionFixture(state.path, [plugin.directory])
+  await setup.waitForFrame((frame) => frame.includes(`Plugin body for ${setup.session.id} ${setup.permission.id}`))
+
+  const frame = setup.captureCharFrame()
+  expect(frame).toContain("Permission required")
+  expect(frame).toContain("Allow once")
+  expect(frame).not.toContain("echo permission-fixture")
+
+  // The options and their keys stay the host's.
+  setup.mockInput.pressEnter()
+  await setup.waitFor(() => setup.requests.length === 1)
+  expect(setup.requests).toEqual([{ decision: "once" }])
+})
+
+test("a body claim that returns the fallback shows the host's body, which still follows the selection", async () => {
+  await using plugin = await copyPlugin("permission-body-decline")
+  await using state = await tmpdir()
+  await using setup = await createPermissionFixture(state.path, [plugin.directory], ["echo *"])
+  await setup.waitForFrame((frame) => frame.includes("echo permission-fixture") && frame.includes("Allow once"))
+
+  setup.mockInput.pressArrow("right")
+  await setup.waitForFrame(
+    (frame) => frame.includes("always allow the following patterns") && !frame.includes("echo permission-fixture"),
+  )
+  setup.mockInput.pressArrow("left")
+  await setup.waitForFrame((frame) => frame.includes("echo permission-fixture"))
+})
+
+test("fullscreen stays with the prompt while a plugin claims the options", async () => {
   await using plugin = await copyPlugin("permission-options")
   await using state = await tmpdir()
-  await using setup = await createPermissionFixture(state.path, claimed ? [plugin.directory] : [])
-  await setup.waitForFrame((frame) => frame.includes(claimed ? "Plugin options for" : "Allow once"))
+  await using setup = await createPermissionFixture(state.path, [plugin.directory])
+  await setup.waitForFrame((frame) => frame.includes("Plugin options for"))
+  const row = () =>
+    setup
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((line) => line.includes("Permission required"))
+  const docked = row()
+
+  setup.mockInput.pressKey("f", { ctrl: true })
+  await setup.waitFor(() => row() < docked)
+  setup.mockInput.pressKey("f", { ctrl: true })
+  await setup.waitFor(() => row() === docked)
+  expect(setup.requests).toHaveLength(0)
+})
+
+test.each([
+  ["without a plugin claim", undefined, "Allow once"],
+  ["under an options claim", "permission-options", "Plugin options for"],
+  ["under a body claim", "permission-body", "Plugin body for"],
+] as const)("ctrl+c at a permission prompt %s rejects the request instead of exiting", async (_name, name, ready) => {
+  await using plugin = await copyPlugin(name ?? "permission-options")
+  await using state = await tmpdir()
+  await using setup = await createPermissionFixture(state.path, name ? [plugin.directory] : [])
+  await setup.waitForFrame((frame) => frame.includes(ready))
 
   setup.mockInput.pressKey("c", { ctrl: true })
   await setup.waitFor(() => setup.requests.length === 1)
@@ -71,7 +122,7 @@ test.each([
   expect(setup.renderer.isDestroyed).toBe(false)
 })
 
-async function createPermissionFixture(state: string, plugins: string[] = []) {
+async function createPermissionFixture(state: string, plugins: string[] = [], save?: string[]) {
   const session = {
     id: `ses_slot_${crypto.randomUUID()}`,
     title: "Slot fixture",
@@ -88,6 +139,7 @@ async function createPermissionFixture(state: string, plugins: string[] = []) {
     sessionID: session.id,
     action: "shell",
     resources: ["echo permission-fixture"],
+    ...(save ? { save } : {}),
   } satisfies PermissionRequest
   const location = { directory, project: { id: session.projectID, directory, canonical: directory } }
   const requests: unknown[] = []

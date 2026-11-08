@@ -197,12 +197,25 @@ export interface SlotMap {
   readonly "prompt.footer.file": PromptFooterInput
   readonly "session.composer.top": { readonly sessionID: string }
   /**
+   * Experimental: may change without compatibility guarantees. The body of a session's permission prompt: what the
+   * request asks for (a command, patterns, an edit's diff, or what "Always allow" will save). A `replace` claim owns
+   * that content only; the header, the body's container and its height limit, the options row and every key stay the
+   * host's. Render `fallback()` to show the host's own body for the request, so a claim can decline reactively and
+   * take the body only while it needs it. Without a claim the host shows its body.
+   */
+  readonly "experimental.session.permission.body": {
+    readonly sessionID: string
+    readonly requestID: string
+    /** Renders the host's own body for this request, following the selected option as it does without a claim. */
+    readonly fallback: () => JSX.Element
+  }
+  /**
    * Experimental: may change without compatibility guarantees. The choices row of a session's permission prompt and
    * the keys that drive it. The request's header and body stay visible around it. A `replace` claim removes the
-   * built-in options, their hints and their keymap (arrows, Enter, Escape and fullscreen), so the claim owns those keys
-   * and answers through `context.client.permission.reply`. Keys the claim does not bind reach the session and app
-   * bindings, so Escape no longer rejects the request. Ctrl+C stays with the prompt and rejects the request as it does
-   * without a claim, instead of exiting the app.
+   * built-in options, their hints and their keymap (arrows, Enter and Escape), so the claim owns those keys and
+   * answers through `context.client.permission.reply`. Keys the claim does not bind reach the session and app
+   * bindings, so Escape no longer rejects the request. The fullscreen key stays with the prompt and still toggles it.
+   * Ctrl+C stays with the prompt and rejects the request as it does without a claim, instead of exiting the app.
    */
   readonly "experimental.session.permission.options": { readonly sessionID: string; readonly requestID: string }
   readonly "session.panel": PanelInput
