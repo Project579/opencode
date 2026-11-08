@@ -924,6 +924,7 @@ describe("shell always saves through wrapper commands", () => {
         "find . -delete",
         // Joined words would not match the source spacing.
         "timeout  10 git status",
+        // A script runner anywhere in the wrapper chain saves the exact command.
         "sudo timeout 10 bash -c x",
       ])
         expect((yield* request(command)).save, command).toEqual([command])
