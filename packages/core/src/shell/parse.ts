@@ -276,11 +276,12 @@ const WRAPPERS: Record<
   xargs: {
     values: [
       ...["-a", "-d", "-E", "-I", "-J", "-L", "-n", "-P", "-R", "-s"],
-      ...["--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"],
+      ...["--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"],
     ],
     flags: [
       ...["--null", "--no-run-if-empty", "--verbose", "--interactive", "--exit", "--open-tty", "--show-limits"],
-      ...["--replace", "--eof"],
+      // These take a value only after `=`.
+      ...["--replace", "--eof", "--max-lines"],
     ],
   },
 }
