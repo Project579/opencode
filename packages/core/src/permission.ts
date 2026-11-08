@@ -13,6 +13,7 @@ import { SessionStore } from "./session/store.js"
 import { Wildcard } from "./util/wildcard.js"
 import { PermissionSaved } from "./permission/saved.js"
 import { PluginHooks } from "./plugin/hooks.js"
+import { ShellSpacing } from "./shell/spacing.js"
 
 const PermissionEffect = Permission.Effect
 export { PermissionEffect as Effect }
@@ -43,8 +44,10 @@ export interface AssertInput extends Omit<Request, "id" | "message"> {
    */
   readonly guards?: ReadonlyArray<string>
   /**
-   * The request runs something no rule can match, such as a shell script built at run time. Unless a configured deny
-   * applies, it asks even when every rule allows it; only unattended rules or a permission hook can settle it.
+   * The request runs something no rule can match, such as a shell script built at run time. When a configured rule for
+   * the action denies or asks, and no later catch-all allow overrides it, the hidden command could slip past it, so the
+   * request asks even when every rule allows its resources. A configured deny still wins, and unattended rules or a
+   * permission hook can settle it.
    */
   readonly opaque?: true
 }
@@ -194,6 +197,23 @@ const layer = Layer.effect(
       )
     }
 
+    // Shell commands and rules are compared with their unquoted spacing collapsed, so spacing never decides a match.
+    function space(input: AssertInput, text: string) {
+      return input.action === "shell" ? ShellSpacing.collapse(text) : text
+    }
+
+    function spaced(input: AssertInput, rules: Permission.Ruleset) {
+      if (input.action !== "shell") return rules
+      return rules.map((rule) => ({ ...rule, resource: ShellSpacing.collapse(rule.resource) }))
+    }
+
+    // Whether a rule for the action denies or asks after the last catch-all allow, so a hidden command could slip past.
+    function stoppable(input: AssertInput, rules: Permission.Ruleset) {
+      const relevant = rules.filter((rule) => Wildcard.match(input.action, rule.action))
+      const last = relevant.findLastIndex((rule) => rule.resource === "*" && rule.effect === "allow")
+      return relevant.slice(last + 1).some((rule) => rule.effect !== "allow")
+    }
+
     // Under last-match-wins, a guard's ask rule decides only if it comes after the rules allowing every resource.
     function guardAsks(input: AssertInput, rules: Permission.Ruleset) {
       if (!input.guards?.length) return false
@@ -213,12 +233,19 @@ const layer = Layer.effect(
     }
 
     const evaluateInput = Effect.fnUntraced(function* (input: AssertInput) {
-      const rules = yield* configured(input.sessionID, input.agent)
-      if (denied(input, rules)) return { effect: "deny" as const, rules }
-      const all = [...rules, ...(yield* savedRules())]
-      const effects = input.resources.map((resource) => evaluate(input.action, resource, all).effect)
+      const subject = {
+        ...input,
+        resources: input.resources.map((resource) => space(input, resource)),
+        guards: input.guards?.map((resource) => space(input, resource)),
+      }
+      const rules = spaced(input, yield* configured(input.sessionID, input.agent))
+      if (denied(subject, rules)) return { effect: "deny" as const, rules }
+      const all = [...rules, ...spaced(input, yield* savedRules())]
+      const effects = subject.resources.map((resource) => evaluate(input.action, resource, all).effect)
       const effect: Permission.Effect =
-        input.opaque || effects.includes("ask") || guardAsks(input, all) ? "ask" : "allow"
+        (input.opaque && stoppable(input, rules)) || effects.includes("ask") || guardAsks(subject, all)
+          ? "ask"
+          : "allow"
       const event = yield* hooks.trigger("permission", "evaluate", {
         sessionID: input.sessionID,
         agent: input.agent,
@@ -231,10 +258,10 @@ const layer = Layer.effect(
       const unattended = yield* Unattended
       if (event.effect !== "ask" || unattended === undefined)
         return { effect: event.effect, message: event.message, rules: all }
-      const settled = [...all, ...unattended]
+      const settled = [...all, ...spaced(input, unattended)]
       const allowed =
-        input.resources.every((resource) => evaluate(input.action, resource, settled).effect === "allow") &&
-        !guardAsks(input, settled)
+        subject.resources.every((resource) => evaluate(input.action, resource, settled).effect === "allow") &&
+        !guardAsks(subject, settled)
       if (allowed) return { effect: "allow" as const, rules: all }
       return {
         effect: "deny" as const,

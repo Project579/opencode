@@ -6,6 +6,7 @@ import os from "os"
 import path from "path"
 import { ShellScan } from "./scan.js"
 import { ShellSelect } from "./select.js"
+import { ShellSpacing } from "./spacing.js"
 import { Wildcard } from "../util/wildcard.js"
 
 type Part = { type: string; text: string; raw: string; unquotedTilde?: boolean }
@@ -209,7 +210,7 @@ const WRAPPERS: Record<
   ltrace: {
     values: [
       ...["-a", "-A", "-D", "-e", "-F", "-l", "-n", "-o", "-p", "-s", "-u", "-w", "-x"],
-      ...["--align", "--indent", "--library", "--output"],
+      ...["--align", "--config", "--debug", "--indent", "--library", "--output", "--where"],
     ],
   },
   nice: { values: ["-n", "--adjustment"] },
@@ -222,7 +223,8 @@ const WRAPPERS: Record<
     values: [
       ...["-a", "-b", "-e", "-E", "-I", "-o", "-O", "-p", "-P", "-s", "-S", "-u", "-U", "-X"],
       ...["--attach", "--columns", "--env", "--output", "--string-limit", "--summary-sort-by"],
-      ...["--trace-path", "--user"],
+      ...["--trace-path", "--user", "--trace", "--signal", "--status", "--abbrev", "--verbose", "--raw"],
+      ...["--read", "--write", "--fault", "--inject", "--trace-fds", "--detach-on"],
     ],
   },
   sudo: {
@@ -250,6 +252,7 @@ const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"])
 const MAX_WRAPPER_DEPTH = 8
 const RUNNERS = new Set([...Object.keys(WRAPPERS), ...SHELLS, "eval", "find", "su"])
 const FIND_WRITES = new Set(["-delete", "-fls", "-fprint", "-fprint0", "-fprintf"])
+const STDIN_FILE = /^\/(?:dev\/stdin|dev\/fd\/\d+|proc\/self\/fd\/\d+)$/
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/
 
 export function scan(command: string, shell: string, cwd: string): Effect.Effect<Result, Error> {
@@ -343,9 +346,12 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
       // a redirect splits its words, or the pattern would hold a * or ? wildcard, it saves the exact command.
       const pattern = item.redirectWordCount === undefined && wrapped?.prefix && `${head}${wrapped.prefix.join(" ")}`
       const exact = wrapped !== undefined && !(pattern && !/[*?]/.test(pattern))
-      // A * or ? in an exact save or in the head would act as a wildcard, so the request offers no "always" instead.
-      if ((exact && /[*?]/.test(item.resource)) || /[*?]/.test(head)) output.unsavable = true
-      if (wrapped?.opaque) {
+      // A * or ? from the command in an exact save, the head or the saved prefix words would act as a wildcard, so the
+      // request offers no "always" instead.
+      if ((exact && /[*?]/.test(item.resource)) || /[*?]/.test(head) || (!wrapped && /[*?]/.test(save.slice(0, -1))))
+        output.unsavable = true
+      // A command name the shell expands at run time cannot be matched by rules.
+      if (wrapped?.opaque || (!powershell && !isStaticBashWord(item.rawWords[0] ?? ""))) {
         output.opaque = true
         output.unsavable = true
       }
@@ -354,11 +360,11 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
         save: !wrapped ? save : exact ? item.resource : `${pattern} *`,
       })
       if (powershell) continue
-      // Leading assignments and redirects are part of the resource, and quotes part of its words, so rules for the
-      // command itself need guards without them; a wrapper adds guards for each command it runs.
+      // Assignments, redirects and spacing the resource keeps, and quotes in its words, would hide the command from
+      // its rules, so it gets guards without them; a wrapper adds guards for each command it runs.
       const plain = !ShellScan.declarations.has(words[0] ?? "") && !CWD.has(words[0] ?? "")
       const guards = [
-        ...(plain && item.commandOffset !== undefined ? [item.rawWords.join(" ")] : []),
+        ...(plain && !item.resource.startsWith(item.rawWords.join(" ")) ? [item.rawWords.join(" ")] : []),
         ...(plain && item.rawWords.some((raw, index) => raw !== item.words[index]) ? [item.words.join(" ")] : []),
         ...(wrapped?.guards ?? []),
       ]
@@ -730,6 +736,11 @@ function prefix(tokens: string[]) {
 
 type Wrapped = { prefix?: string[]; guards: string[]; opaque?: true }
 const OPAQUE: Wrapped = { guards: [], opaque: true }
+/**
+ * Input xargs or find adds to the command they run: `replace` is the text that stands for it, and `appended` means
+ * xargs appends it as further arguments.
+ */
+type Supply = { replace?: string; appended?: true }
 
 /**
  * What a wrapper such as `env`, `xargs`, `find -exec` or `bash -c` runs: a guard for each command, so rules for it
@@ -737,48 +748,58 @@ const OPAQUE: Wrapped = { guards: [], opaque: true }
  * saved exactly, never as `<wrapper> *`. `opaque` means it runs something no rule can match. `undefined` means the
  * command wraps nothing.
  */
-function unwrap(words: string[], raw: string[], dialect: ShellScan.Dialect, depth = 0): Wrapped | undefined {
+function unwrap(
+  words: string[],
+  raw: string[],
+  dialect: ShellScan.Dialect,
+  depth = 0,
+  supply?: Supply,
+): Wrapped | undefined {
   // A path such as /usr/bin/env runs the same wrapper.
   const head = path.posix.basename(words[0] ?? "")
-  if (head === "eval") return script(words.slice(1).join(" "), raw.slice(1).every(isStaticBashWord), dialect, depth)
-  if (SHELLS.has(head)) {
-    const index = shellScript(words)
-    if (index === undefined) return
-    // Without `-c` or a script file the shell reads its script from stdin, such as a heredoc or a pipe.
-    if (index === "stdin") return OPAQUE
-    const shell = head === "zsh" || head === "bash" ? head : "posix"
-    return script(words[index], isStaticBashWord(raw[index]), shell, depth)
-  }
-  if (head === "su") return su(words, raw, dialect, depth)
+  if (head === "eval")
+    return script(words.slice(1).join(" "), raw.slice(1).every(isStaticBashWord), dialect, depth, supply)
+  if (SHELLS.has(head)) return shell(words, raw, head, depth, supply)
+  if (head === "su") return su(words, raw, dialect, depth, supply)
   if (head === "find") return findExec(words, raw, dialect, depth)
   const spec = WRAPPERS[head]
   if (!spec) return
   const start = commandStart(words, head, spec)
+  // Without a command, a wrapper under xargs runs its input, and a login shell option reads stdin.
   if (start === undefined)
-    return words.slice(1).some((word) => spec.shell?.some((option) => clusterHas(word, option)))
+    return supply?.appended || words.slice(1).some((word) => spec.shell?.some((option) => clusterHas(word, option)))
       ? OPAQUE
       : { guards: [] }
-  if (typeof start === "object") return script(start.text, start.static(raw), dialect, depth)
+  if (typeof start === "object") return script(start.text, start.static(raw), dialect, depth, supply)
   if (spec.script?.includes(words[start]))
     return start + 1 < words.length
-      ? script(words[start + 1], isStaticBashWord(raw[start + 1]), dialect, depth)
+      ? script(words[start + 1], isStaticBashWord(raw[start + 1]), dialect, depth, supply)
       : { guards: [] }
-  if (spec.joins) return script(words.slice(start).join(" "), raw.slice(start).every(isStaticBashWord), "posix", depth)
-  const inner = command(words.slice(start), raw.slice(start), dialect, depth)
+  // `watch` hands its operands, joined by spaces, to `sh -c`, unless `-x` runs them directly.
+  if (spec.joins && !words.slice(1, start).some((word) => clusterHas(word, "-x") || word === "--exec"))
+    return script(words.slice(start).join(" "), raw.slice(start).every(isStaticBashWord), "posix", depth, supply)
+  const inner = command(
+    words.slice(start),
+    raw.slice(start),
+    dialect,
+    depth,
+    head === "xargs" ? xargsSupply(words.slice(1, start)) : supply,
+  )
   return { ...inner, prefix: inner.prefix && [...raw.slice(0, start), ...inner.prefix] }
 }
 
-function command(words: string[], raw: string[], dialect: ShellScan.Dialect, depth: number): Wrapped {
+function command(words: string[], raw: string[], dialect: ShellScan.Dialect, depth: number, supply?: Supply): Wrapped {
   // Like their unwrapped forms, directory changes are checked as directories and declarations are not resources.
   if (CWD.has(words[0] ?? "") || ShellScan.declarations.has(words[0] ?? ""))
     return { prefix: raw.slice(0, 1), guards: [] }
   const exact = raw.join(" ")
-  // A command name the shell expands at run time cannot be matched by rules.
-  if (!isStaticBashWord(raw[0] ?? "")) return { guards: [exact], opaque: true }
+  // A command name the shell expands at run time, or that xargs or find fill in from input, cannot be matched.
+  if (!isStaticBashWord(raw[0] ?? "") || (supply?.replace !== undefined && (words[0] ?? "").includes(supply.replace)))
+    return { guards: [exact], opaque: true }
   const unquoted = words.join(" ")
   const nested =
     depth < MAX_WRAPPER_DEPTH
-      ? unwrap(words, raw, dialect, depth + 1)
+      ? unwrap(words, raw, dialect, depth + 1, supply)
       : RUNNERS.has(path.posix.basename(words[0] ?? ""))
         ? OPAQUE
         : undefined
@@ -789,9 +810,13 @@ function command(words: string[], raw: string[], dialect: ShellScan.Dialect, dep
   }
 }
 
-// A script whose text the outer shell expands, or that the scanner cannot analyze, cannot be matched by rules.
-function script(text: string, isStatic: boolean, dialect: ShellScan.Dialect, depth: number): Wrapped {
-  if (!isStatic || depth >= MAX_WRAPPER_DEPTH) return OPAQUE
+/**
+ * A script whose text the outer shell expands, that xargs or find fill in from input, or that the scanner cannot
+ * analyze cannot be matched by rules.
+ */
+function script(text: string, isStatic: boolean, dialect: ShellScan.Dialect, depth: number, supply?: Supply): Wrapped {
+  if (!isStatic || depth >= MAX_WRAPPER_DEPTH || (supply?.replace !== undefined && text.includes(supply.replace)))
+    return OPAQUE
   const scanned = ShellScan.scan(text, dialect)
   if (scanned.kind === "opaque") return OPAQUE
   const inner = scanned.commands
@@ -804,10 +829,22 @@ function script(text: string, isStatic: boolean, dialect: ShellScan.Dialect, dep
 }
 
 /**
- * The index of the script operand when a shell is invoked with `-c`, `stdin` when it reads its script from stdin, or
- * `undefined` when it runs a script file.
+ * A shell runs its `-c` script, a script file, which "always" saves with the file so it never covers `bash -c`, or a
+ * script read from stdin, such as a heredoc or a pipe.
  */
-function shellScript(words: string[]) {
+function shell(words: string[], raw: string[], head: string, depth: number, supply?: Supply): Wrapped {
+  const operand = shellOperand(words)
+  if (operand.kind === "stdin") return OPAQUE
+  const file = words[operand.index]
+  const dialect = head === "zsh" || head === "bash" ? head : "posix"
+  if (operand.kind === "inline")
+    return file === undefined ? OPAQUE : script(file, isStaticBashWord(raw[operand.index]), dialect, depth, supply)
+  if (STDIN_FILE.test(file) || (supply?.replace !== undefined && file.includes(supply.replace))) return OPAQUE
+  return { prefix: raw.slice(0, operand.index + 1), guards: [] }
+}
+
+/** Where a shell's `-c` script or script file is, or that it reads its script from stdin. */
+function shellOperand(words: string[]) {
   let index = 1
   let inline = false
   let stdin = false
@@ -817,24 +854,26 @@ function shellScript(words: string[]) {
     if (word === "--" || word === "-") break
     if (word === "--rcfile" || word === "--init-file") index++
     if (word.startsWith("--")) continue
-    if (/^[-+][oO]$/.test(word)) index++
-    else if (word.startsWith("-") && word.includes("c")) inline = true
+    // A cluster ending in o or O, such as `-euo pipefail`, takes the next word as the option name.
+    if (/[oO]$/.test(word)) index++
+    if (word.startsWith("-") && word.includes("c")) inline = true
     else if (word.startsWith("-") && word.includes("s")) stdin = true
   }
-  if (inline) return index < words.length ? index : undefined
-  return stdin || index >= words.length ? ("stdin" as const) : undefined
+  if (inline) return { kind: "inline" as const, index }
+  if (stdin || index >= words.length) return { kind: "stdin" as const, index }
+  return { kind: "file" as const, index }
 }
 
 // `su` runs its `-c` script, or an interactive shell that reads stdin.
-function su(words: string[], raw: string[], dialect: ShellScan.Dialect, depth: number): Wrapped {
+function su(words: string[], raw: string[], dialect: ShellScan.Dialect, depth: number, supply?: Supply): Wrapped {
   const index = words.findIndex((word, next) => next > 0 && (/^-[^-]*c$/.test(word) || word === "--command"))
   if (index >= 0)
     return index + 1 < words.length
-      ? script(words[index + 1], isStaticBashWord(raw[index + 1]), dialect, depth)
+      ? script(words[index + 1], isStaticBashWord(raw[index + 1]), dialect, depth, supply)
       : { guards: [] }
   const inline = words.findIndex((word) => word.startsWith("--command="))
   if (inline >= 0)
-    return script(words[inline].slice("--command=".length), isStaticBashWord(raw[inline]), dialect, depth)
+    return script(words[inline].slice("--command=".length), isStaticBashWord(raw[inline]), dialect, depth, supply)
   return OPAQUE
 }
 
@@ -844,7 +883,7 @@ function findExec(words: string[], raw: string[], dialect: ShellScan.Dialect, de
     if (!FIND_EXEC.has(word)) return []
     const found = words.findIndex((item, next) => next > index && (item === ";" || item === "+"))
     const end = found < 0 ? words.length : found
-    return [command(words.slice(index + 1, end), raw.slice(index + 1, end), dialect, depth)]
+    return [command(words.slice(index + 1, end), raw.slice(index + 1, end), dialect, depth, { replace: "{}" })]
   })
   if (inner.length === 0) return words.some((word) => FIND_WRITES.has(word)) ? { guards: [] } : undefined
   return {
@@ -853,27 +892,34 @@ function findExec(words: string[], raw: string[], dialect: ShellScan.Dialect, de
   }
 }
 
+// xargs appends its input as arguments, or puts it where the `-I`, `-i` or `-J` replace string is.
+function xargsSupply(options: string[]): Supply {
+  const replace = options.flatMap((word, index) => {
+    if (word === "-I" || word === "-J") return [options[index + 1] ?? ""]
+    if (/^-[IJi]./.test(word)) return [word.slice(2)]
+    if (word === "-i" || word === "--replace") return ["{}"]
+    if (word.startsWith("--replace=")) return [word.slice("--replace=".length)]
+    return []
+  })[0]
+  return replace === undefined ? { appended: true } : { replace }
+}
+
 /** Whether an option word, alone or in a cluster such as `-iu`, is the given option. */
 function clusterHas(word: string, option: string) {
   if (option.startsWith("--") || word.startsWith("--")) return word === option
   return word.startsWith("-") && word.slice(1).includes(option.slice(1))
 }
 
-/**
- * The command with each run of unquoted blanks as one space, so saved patterns match however it is spaced. A command
- * with text the shell could read differently once respaced, such as expansions, escapes or heredocs, keeps its
- * spacing.
- */
+/** The command with its unquoted spacing collapsed, and its command offset moved to match. */
 function respace<Item extends { resource: string; commandOffset?: number }>(item: Item): Item {
-  if (/\$[({'"]|[`\\\n]|<</.test(item.resource)) return item
-  const collapse = (text: string) =>
-    text.replace(/'[^']*'|"[^"]*"|[ \t]+/g, (match) => (/^[ \t]/.test(match) ? " " : match))
+  const resource = ShellSpacing.collapse(item.resource)
+  if (resource === item.resource) return item
   return {
     ...item,
-    resource: collapse(item.resource),
+    resource,
     ...(item.commandOffset === undefined
       ? {}
-      : { commandOffset: collapse(item.resource.slice(0, item.commandOffset)).length }),
+      : { commandOffset: ShellSpacing.collapse(item.resource.slice(0, item.commandOffset)).length }),
   }
 }
 
@@ -894,16 +940,11 @@ function commandStart(words: string[], head: string, spec: (typeof WRAPPERS)[str
     // `command -v` and `sudo -e` look up or edit their operands instead of running them.
     if (head === "command" && /^-p*[vV]/.test(word)) return
     if (head === "sudo" && (word === "-e" || word === "--edit")) return
-    if (head === "env" && (word === "-S" || word === "--split-string"))
-      return {
-        text: words.slice(index + 1).join(" "),
-        static: (raw: string[]) => raw.slice(index + 1).every(isStaticBashWord),
-      }
-    if (head === "env" && word.startsWith("--split-string="))
-      return {
-        text: [word.slice("--split-string=".length), ...words.slice(index + 1)].join(" "),
-        static: (raw: string[]) => raw.slice(index).every(isStaticBashWord),
-      }
+    if (head === "env") {
+      const split = splitString(words, index)
+      if (split !== undefined)
+        return { text: split, static: (raw: string[]) => raw.slice(index).every(isStaticBashWord) }
+    }
     if (word.startsWith("--")) {
       index += !word.includes("=") && spec.values?.includes(word) ? 2 : 1
       continue
@@ -915,4 +956,18 @@ function commandStart(words: string[], head: string, spec: (typeof WRAPPERS)[str
   if (spec.assignments) while (ASSIGNMENT.test(words[index] ?? "")) index++
   index += spec.operands ?? 0
   return index < words.length ? index : undefined
+}
+
+/** The text `env -S` splits into a command, when the option at index is `-S`, `--split-string` or ends a cluster. */
+function splitString(words: string[], index: number) {
+  const word = words[index]
+  const rest = words.slice(index + 1)
+  if (word === "--split-string") return rest.join(" ")
+  if (word.startsWith("--split-string=")) return [word.slice("--split-string=".length), ...rest].join(" ")
+  if (word.startsWith("--")) return
+  // Like getopt, the first option in a cluster that takes a value takes the rest of the word, as `-iS'cmd'` does.
+  const letter = [...word.slice(1)].findIndex((char) => char === "S" || WRAPPERS.env.values?.includes(`-${char}`))
+  if (letter < 0 || word[letter + 1] !== "S") return
+  const attached = word.slice(letter + 2)
+  return attached ? [attached, ...rest].join(" ") : rest.join(" ")
 }

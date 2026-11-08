@@ -106,7 +106,13 @@ const compatibilityCases: Array<[string, string, Record<string, string>, ShellPa
       "bash",
       "git '*'",
       {},
-      { commands: [{ resource: "git '*'", save: "git '*' *" }], directories: [], guards: ["git *"] },
+      // The quoted * in the saved prefix would act as a wildcard, so "always" is not offered.
+      {
+        commands: [{ resource: "git '*'", save: "git '*' *" }],
+        directories: [],
+        guards: ["git *"],
+        unsavable: true,
+      },
     ],
     [
       "bash",

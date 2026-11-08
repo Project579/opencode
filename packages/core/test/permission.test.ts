@@ -601,8 +601,9 @@ describe("shell scanner permission impact", () => {
       approved: ["git status *", "Write-Output *"],
       exact: ["git status", "Write-Output done"],
       denied: "git\tstatus",
-      savedEffect: ["allow", "ask"],
-      exactEffect: ["allow", "ask"],
+      // Shell commands and rules are matched with their unquoted spacing collapsed.
+      savedEffect: ["allow", "allow"],
+      exactEffect: ["allow", "allow"],
       deniedEffect: ["allow", "deny"],
     },
     {
@@ -824,7 +825,8 @@ describe("shell scanner permission impact", () => {
         ["allow", "allow"],
       ],
       next: "git status",
-      nextEffect: ["ask", "ask"],
+      // The saved `git\tstatus *` matches however the command is spaced.
+      nextEffect: ["ask", "allow"],
     },
   ] as const) {
     it.live(`${fixture.name}: always allow covers repeat execution and narrows prefix scope`, () =>
@@ -1222,7 +1224,10 @@ describe("shell rules through wrapper commands", () => {
   ])
     it.live(`a command it cannot read always asks and offers no always: ${command}`, () =>
       Effect.gen(function* () {
-        yield* setup([{ action: "*", resource: "*", effect: "allow" }])
+        yield* setup([
+          { action: "*", resource: "*", effect: "allow" },
+          { action: "shell", resource: "git push *", effect: "deny" },
+        ])
         const service = yield* Permission.Service
         const input = yield* request(command)
         expect(input.opaque, command).toBe(true)
@@ -1332,4 +1337,170 @@ describe("shell rules through wrapper commands", () => {
       expect(quoted.effect).toBe("allow")
     }),
   )
+  describe("commands a wrapper hides", () => {
+    for (const command of [
+      "watch -x sh -c 'rm -rf x'",
+      "watch --exec bash -c 'rm -rf x'",
+      "watch -x rm -rf x",
+      "strace --trace open rm -rf x",
+      "strace --signal SIGINT --status failed rm -rf x",
+      "strace --trace=open rm -rf x",
+      "strace --inject open:error=ENOENT --detach-on execve rm -rf x",
+      "ltrace --config f --where 3 rm -rf x",
+      "bash -euo pipefail -c 'rm -rf x'",
+      "bash -eo pipefail -c 'rm -rf x'",
+      "sh -eo pipefail -c 'rm -rf x'",
+      "zsh -o pipefail -c 'rm -rf x'",
+      "bash -O extglob -c 'rm -rf x'",
+      "env -S'rm -rf x'",
+      "env -iS'rm -rf x'",
+      "env -S 'rm -rf x'",
+      "rm\t-rf\t$(pwd)",
+      "rm 2>/dev/null -rf x",
+    ])
+      it.live(`a deny for the wrapped command applies to ${command}`, () =>
+        Effect.gen(function* () {
+          yield* setup([
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "shell", resource: "rm -rf *", effect: "deny" },
+          ])
+          expect((yield* ask(command)).effect).toBe("deny")
+        }),
+      )
+
+    for (const command of [
+      "echo 'rm x' | xargs sh -c",
+      "printf 'rm x' | xargs -I{} sh -c '{}'",
+      "echo rm x | xargs env",
+      "echo rm x | xargs sudo",
+      "echo x | xargs timeout 5",
+      "echo x | xargs bash",
+      "echo x | xargs -I% % y",
+      "find . -exec {} \\;",
+      "find . -name x -exec sh -c {} \\;",
+      "find . -exec sh -c 'echo {}' \\;",
+      "sh -c",
+      "bash /dev/stdin",
+      "$CMD x",
+      '"$BIN" x',
+      "X=rm; $X -rf /",
+    ])
+      it.live(`cannot read ${command}`, () =>
+        Effect.gen(function* () {
+          const input = yield* request(command)
+          expect(input.opaque, command).toBe(true)
+          expect(input.save, command).toBeUndefined()
+        }),
+      )
+
+    it.live("still reads commands whose input only adds arguments", () =>
+      Effect.gen(function* () {
+        for (const command of [
+          "xargs rm",
+          "xargs -I{} rm {}",
+          "find . -exec rm {} \\;",
+          "find . -exec env \\;",
+          "bash script.sh",
+          "echo x | xargs sh -c 'echo $1' _",
+        ])
+          expect((yield* request(command)).opaque, command).toBeUndefined()
+      }),
+    )
+
+    it.live("a command it cannot read asks only when a rule could stop a hidden command", () =>
+      Effect.gen(function* () {
+        const service = yield* Permission.Service
+        for (const [rules, effect] of [
+          [[{ action: "*", resource: "*", effect: "allow" }], "allow"],
+          [
+            [
+              { action: "*", resource: "*", effect: "deny" },
+              { action: "shell", resource: "*", effect: "allow" },
+            ],
+            "allow",
+          ],
+          [
+            [
+              { action: "*", resource: "*", effect: "allow" },
+              { action: "read", resource: "*.env", effect: "ask" },
+            ],
+            "allow",
+          ],
+          [
+            [
+              { action: "*", resource: "*", effect: "allow" },
+              { action: "shell", resource: "git push *", effect: "deny" },
+            ],
+            "ask",
+          ],
+          [
+            [
+              { action: "shell", resource: "*", effect: "allow" },
+              { action: "shell", resource: "git push *", effect: "ask" },
+            ],
+            "ask",
+          ],
+          [[{ action: "shell", resource: "*", effect: "ask" }], "ask"],
+        ] satisfies Array<[Permission.Ruleset, "allow" | "ask"]>) {
+          yield* setup(rules)
+          const result = yield* ask('bash -c "$X"')
+          expect(result.effect, JSON.stringify(rules)).toBe(effect)
+          if (result.effect === "ask") yield* service.reply({ requestID: result.id, reply: "once" })
+        }
+      }),
+    )
+
+    it.live("offers no always when a saved prefix word holds a wildcard", () =>
+      Effect.gen(function* () {
+        for (const command of ["git '*'", "npm run '*'", "git s? x", "git 's*' x"])
+          expect((yield* request(command)).save, command).toBeUndefined()
+        expect((yield* request("git status 'a*'")).save).toEqual(["git status *"])
+      }),
+    )
+
+    it.live("saves a shell running a script file with that file", () =>
+      Effect.gen(function* () {
+        yield* setup([{ action: "shell", resource: "*", effect: "ask" }])
+        const service = yield* Permission.Service
+        expect((yield* request("bash script.sh")).save).toEqual(["bash script.sh *"])
+        expect((yield* request("bash -x script.sh a")).save).toEqual(["bash -x script.sh *"])
+        const first = yield* ask("bash script.sh")
+        yield* service.reply({ requestID: first.id, reply: "always" })
+        expect((yield* ask("bash script.sh --flag")).effect).toBe("allow")
+        for (const command of ["bash -c 'rm x'", "bash other.sh"]) {
+          const result = yield* ask(command)
+          expect(result.effect, command).toBe("ask")
+          yield* service.reply({ requestID: result.id, reply: "once" })
+        }
+      }),
+    )
+
+    it.live("configured and saved rules match however they are spaced", () =>
+      Effect.gen(function* () {
+        yield* setup([
+          { action: "*", resource: "*", effect: "allow" },
+          { action: "shell", resource: "rm  -rf *", effect: "deny" },
+          { action: "shell", resource: "git\tpush *", effect: "ask" },
+        ])
+        const service = yield* Permission.Service
+        for (const command of ["rm -rf x", "rm  -rf x", "timeout 5 rm -rf x"])
+          expect((yield* ask(command)).effect, command).toBe("deny")
+        const push = yield* ask("git push")
+        expect(push.effect).toBe("ask")
+        yield* service.reply({ requestID: push.id, reply: "once" })
+
+        yield* setRules([{ action: "shell", resource: "*", effect: "ask" }])
+        const saved = yield* PermissionSaved.Service
+        yield* saved.add({ projectID: Project.ID.global, action: "shell", resources: ["timeout  10 git status *"] })
+        expect((yield* ask("timeout 10 git status")).effect).toBe("allow")
+        // A rule written with spacing inside quotes keeps it.
+        yield* setRules([
+          { action: "*", resource: "*", effect: "allow" },
+          { action: "shell", resource: "echo 'a  b'", effect: "deny" },
+        ])
+        expect((yield* ask("echo 'a  b'")).effect).toBe("deny")
+        expect((yield* ask("echo 'a b'")).effect).toBe("allow")
+      }),
+    )
+  })
 })
