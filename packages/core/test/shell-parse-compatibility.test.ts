@@ -103,7 +103,7 @@ const compatibilityCases: Array<[string, string, Record<string, string>, ShellPa
       "FOO=bar git status",
       {},
       {
-        commands: [{ resource: "FOO=bar git status", save: "git status *" }],
+        commands: [{ resource: "FOO=bar git status", save: "FOO=bar git status *" }],
         directories: [],
         guards: ["git status"],
       },
@@ -184,8 +184,8 @@ const compatibilityCases: Array<[string, string, Record<string, string>, ShellPa
       {},
       {
         commands: [
-          { resource: "command cd /outside", save: "command *" },
-          { resource: "builtin cd /elsewhere", save: "builtin *" },
+          { resource: "command cd /outside", save: "command cd *" },
+          { resource: "builtin cd /elsewhere", save: "builtin cd *" },
         ],
         directories: ["/outside", "/elsewhere"],
       },
