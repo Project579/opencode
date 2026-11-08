@@ -968,26 +968,39 @@ function findExec(words: string[], raw: string[], dialect: ShellScan.Dialect, de
   }
 }
 
-// xargs appends its input as arguments, or puts it where its replace string (`-I`, `-i`, `-J`, `--replace`) is.
+/**
+ * xargs appends its input as arguments, or puts it where its replace string (`-I`, `-i`, `-J`, `--replace`) is. As
+ * in GNU xargs, options apply in order: the last replace option wins, and a later max-lines option (`-L`, `-l`,
+ * `--max-lines`) turns replacing off again. The replace string is kept even then, so text holding it stays unread.
+ */
 function xargsSupply(options: string[]): Supply {
-  const replace = options.flatMap((word, index) => {
-    if (word.startsWith("--")) {
-      const equals = word.indexOf("=")
-      const name = equals < 0 ? word : word.slice(0, equals)
-      return name.length >= 3 && "--replace".startsWith(name) ? [equals < 0 ? "{}" : word.slice(equals + 1)] : []
-    }
-    if (!word.startsWith("-")) return []
-    // In a cluster such as `-0I{}`, the first option that takes a value takes the rest of the word or the next word.
-    const position = [...word.slice(1)].findIndex((letter) => "IJiadeELlnPsR".includes(letter))
-    if (position < 0) return []
-    const letter = word[position + 1]
-    const rest = word.slice(position + 2)
-    if (letter === "I" || letter === "J") return [rest || (options[index + 1] ?? "")]
-    if (letter === "i") return [rest || "{}"]
-    return []
-  })
-  // As in GNU xargs, the last replace option wins.
-  return replace.length === 0 ? { appended: true } : { replace: replace.at(-1) }
+  const state = options.reduce<{ replace?: string; appended: boolean }>(
+    (current, word, index) => {
+      if (word.startsWith("--")) {
+        const equals = word.indexOf("=")
+        const name = equals < 0 ? word : word.slice(0, equals)
+        if (name.length >= 3 && "--replace".startsWith(name))
+          return { replace: equals < 0 ? "{}" : word.slice(equals + 1), appended: false }
+        if (name.length >= "--max-l".length && "--max-lines".startsWith(name)) return { ...current, appended: true }
+        return current
+      }
+      if (!word.startsWith("-")) return current
+      // In a cluster such as `-0I{}`, the first option that takes a value takes the rest of the word or the next word.
+      const position = [...word.slice(1)].findIndex((letter) => "IJiadeELlnPsR".includes(letter))
+      if (position < 0) return current
+      const letter = word[position + 1]
+      const rest = word.slice(position + 2)
+      if (letter === "I" || letter === "J") return { replace: rest || (options[index + 1] ?? ""), appended: false }
+      if (letter === "i") return { replace: rest || "{}", appended: false }
+      if (letter === "L" || letter === "l") return { ...current, appended: true }
+      return current
+    },
+    { appended: true },
+  )
+  return {
+    ...(state.replace === undefined ? {} : { replace: state.replace }),
+    ...(state.appended ? { appended: true as const } : {}),
+  }
 }
 
 /** The command named by the basename of a path such as /usr/bin/rm, which rules name it by. */
@@ -1123,6 +1136,7 @@ function splitString(words: string[], index: number) {
   if (!value) return
   return {
     split: [...value.text.split(/[ \t\n]+/).filter(Boolean), ...words.slice(value.next)],
-    quoted: /['"\\]/.test(value.text),
+    // env's tokenizer also splits at \v, \f and \r, which the split above does not.
+    quoted: /['"\\\v\f\r]/.test(value.text),
   }
 }

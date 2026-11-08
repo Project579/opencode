@@ -1663,5 +1663,37 @@ describe("shell rules through wrapper commands", () => {
         expect(ShellSpacing.collapse("echo “a  b”  c")).toBe("echo “a  b”  c")
       }),
     )
+    for (const command of [
+      "env -S$'rm\\v-rf\\vx'",
+      "env -S$'rm\\f-rf\\fx'",
+      "env -S$'rm\\r-rf\\rx'",
+      "echo 'rm -rf x' | xargs -I Q -L 1 env",
+      "echo 'rm -rf x' | xargs -I Q -L1 env",
+      "echo 'rm -rf x' | xargs -IQ --max-lines=1 env",
+      "echo 'rm -rf x' | xargs -i -l env",
+      "echo 'rm -rf x' | xargs --r -L1 env",
+      "echo 'rm -rf x' | xargs -L 1 -I Q sh -c Q",
+      "echo 'rm -rf x' | xargs -I Q -n 1 sh -c Q",
+    ])
+      it.live(`cannot read, so a deny rule makes it ask: ${command}`, () =>
+        Effect.gen(function* () {
+          yield* setup([
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "shell", resource: "rm -rf *", effect: "deny" },
+          ])
+          const service = yield* Permission.Service
+          expect((yield* request(command)).opaque, command).toBe(true)
+          const result = yield* ask(command)
+          expect(result.effect, command).not.toBe("allow")
+          if (result.effect === "ask") yield* service.reply({ requestID: result.id, reply: "once" })
+        }),
+      )
+
+    it.live("a replace option given after a max-lines option still replaces", () =>
+      Effect.gen(function* () {
+        for (const command of ["echo x | xargs -L 1 -I Q env", "echo x | xargs -I Q -n 1 env"])
+          expect((yield* request(command)).opaque, command).toBeUndefined()
+      }),
+    )
   })
 })
