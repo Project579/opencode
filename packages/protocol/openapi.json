@@ -16676,6 +16676,9 @@
               "codemode_vm": {
                 "type": "boolean"
               },
+              "plugin_tool_permission": {
+                "type": "boolean"
+              },
               "part_rows": {
                 "type": "boolean"
               },

@@ -6,6 +6,7 @@ import { EventManifest } from "@opencode/schema/event-manifest"
 import type { Event } from "@opencode/schema/event"
 import { ServerConfig } from "@opencode/schema/mcp"
 import { App } from "../app.js"
+import { Config } from "../config.js"
 import { Effect, Schema, Stream } from "effect"
 import { Agent } from "../agent.js"
 import { Artifact } from "../artifact.js"
@@ -29,6 +30,7 @@ import { Rpc } from "../rpc.js"
 import { AbsolutePath, type DeepMutable } from "../schema.js"
 import { Skill } from "../skill.js"
 import { Tool } from "../tool.js"
+import { Flag } from "../flag.js"
 import { effectiveName } from "../tool/runtime.js"
 import { Workspace } from "../workspace.js"
 import { Vcs } from "../vcs.js"
@@ -118,6 +120,11 @@ export const make = Effect.fn("PluginHost.make")(function* (
       }),
     )
 
+  // Tool executors run outside the host's context, so the flag is read from the context the host was made in.
+  const pluginToolPermission = Flag.enabled("plugin_tool_permission").pipe(
+    Effect.provideContext(yield* Effect.context<never>()),
+  )
+
   // Built-in tools check permission themselves. A tool an installed plugin adds may not, so the user's rule for its
   // name is applied before it runs, the way MCP tools apply theirs. Updates are left alone: a plugin that edits or
   // wraps an existing tool keeps that tool's own, finer check, which a whole-tool check would override.
@@ -128,6 +135,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
         ...tool,
         execute: (input, context) =>
           Effect.gen(function* () {
+            if (!(yield* pluginToolPermission)) return yield* tool.execute(input, context)
             const action = tool.options?.permission ?? effectiveName(tool)
             // A tool that checks its own resources gets only the floor: a whole-tool check would block or repeat it.
             if (tool.options?.experimental?.permission?.self)
@@ -670,6 +678,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
 
 export const requirements = LayerNode.group([
   App.node,
+  Config.node,
   Agent.node,
   Artifact.node,
   AISDK.node,

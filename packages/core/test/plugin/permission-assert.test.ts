@@ -11,6 +11,7 @@ import { Session } from "@opencode/core/session"
 import type { PermissionDomain } from "@opencode/plugin/promise/permission"
 import { SessionMessage } from "@opencode/schema/session-message"
 import type { Info } from "@opencode/schema/tool"
+import { Flag } from "@opencode/core/flag"
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
 import { testEffect } from "../lib/effect"
 import { makePluginTestLayer } from "./fixture"
@@ -47,7 +48,10 @@ const permission = Layer.succeed(
   }),
 )
 
-const it = testEffect(makePluginTestLayer(permission))
+// Test apps run on an unknown channel, where flags default to off.
+const flagOn = Layer.succeed(Flag.Overrides, "plugin_tool_permission")
+
+const it = testEffect(Layer.merge(makePluginTestLayer(permission), flagOn))
 const sessionID = Session.ID.make("ses_plugin_permission")
 
 it.live("Effect plugins assert permissions and receive outcomes as tool errors", () =>
@@ -159,6 +163,27 @@ it.live("tools from installed plugins ask for permission under their name before
   }),
 )
 
+it.live("with the plugin_tool_permission flag off, tools from installed plugins run without a permission check", () =>
+  Effect.gen(function* () {
+    const ran: string[] = []
+    const host = yield* PluginHost.make(yield* Plugin.Service, "installed", { type: "package", target: "installed" }).pipe(
+      Effect.provideService(Flag.Overrides, "-plugin_tool_permission"),
+    )
+    yield* host.tool.transform((editor) => {
+      editor.add(echo("lookup", ran, "docs"))
+      editor.add(echo("blocked", ran))
+    })
+
+    asserted.length = 0
+    floored.length = 0
+    expect(Exit.isSuccess(yield* run("docs_lookup"))).toBe(true)
+    expect(Exit.isSuccess(yield* run("blocked"))).toBe(true)
+    expect(asserted).toEqual([])
+    expect(floored).toEqual([])
+    expect(ran).toEqual(["lookup", "blocked"])
+  }),
+)
+
 it.live("built-in tools keep their own permission checks, even when an installed plugin edits or wraps them", () =>
   Effect.gen(function* () {
     const ran: string[] = []
@@ -249,7 +274,7 @@ it.live("installed plugin executors keep their `this`", () =>
 )
 
 // The real permission service, for the rules the deny floor reads.
-const real = testEffect(makePluginTestLayer(null))
+const real = testEffect(Layer.merge(makePluginTestLayer(null), flagOn))
 
 const sessionWithRules = Effect.fn(function* (rules: Permission.Ruleset) {
   const agents = yield* Agent.Service
