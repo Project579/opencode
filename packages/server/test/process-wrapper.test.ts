@@ -61,13 +61,6 @@ const lines = (log: string) =>
     Effect.orElseSucceed(() => [] as Array<string>),
   )
 
-// The wrapper writes its log before it runs the command, so a line proves the command is about to start.
-const logged = (log: string) =>
-  lines(log).pipe(
-    Effect.repeat({ until: (found) => found.length >= 1, schedule: Schedule.spaced("20 millis") }),
-    Effect.timeout("10 seconds"),
-  )
-
 describe.skipIf(process.platform === "win32")("experimental.process.wrapper", () => {
   it.live(
     "wraps a configured stdio MCP server, which still answers tools/list",
@@ -101,20 +94,29 @@ describe.skipIf(process.platform === "win32")("experimental.process.wrapper", ()
       Effect.gen(function* () {
         const log = path.join((yield* tmpdirScoped("opencode-process-wrapper-log-")).path, "wrapper.log")
         const server = yield* serve([wrapperScript, log], { permission: { shell: "allow" } })
+        const query = new URLSearchParams({ "location[directory]": server.directory })
         const response = yield* Effect.promise(() =>
-          fetch(
-            new URL(`/api/shell?${new URLSearchParams({ "location[directory]": server.directory })}`, server.base),
-            {
-              method: "POST",
-              headers: { ...headers, "content-type": "application/json" },
-              body: JSON.stringify({ command: "printf wrapped" }),
-            },
-          ),
+          fetch(new URL(`/api/shell?${query}`, server.base), {
+            method: "POST",
+            headers: { ...headers, "content-type": "application/json" },
+            body: JSON.stringify({ command: "printf wrapped" }),
+          }),
         )
         expect(response.status).toBe(200)
-        const found = yield* logged(log)
+        const created: { data: { id: string } } = yield* Effect.promise(() => response.json())
+        // Count only once the command has exited, so a second, nested wrap would already be in the log.
+        yield* Effect.promise(() =>
+          fetch(new URL(`/api/shell/${created.data.id}?${query}`, server.base), { headers }).then(
+            (res): Promise<{ data: { status: string } }> => res.json(),
+          ),
+        ).pipe(
+          Effect.repeat({ until: (info) => info.data.status !== "running", schedule: Schedule.spaced("20 millis") }),
+          Effect.timeout("10 seconds"),
+        )
+        const found = yield* lines(log)
         expect(found).toHaveLength(1)
         expect(found[0]).toContain("printf wrapped")
+        expect(found[0]).not.toContain("record-wrapper.sh")
       }),
     20_000,
   )
