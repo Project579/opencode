@@ -16,6 +16,11 @@ const POWERSHELL_STACK_FLAG_RE = /^-(?:stack(?:name|nam|na|n)?|st):?$/i
 export type Result = {
   commands: Array<{ resource: string; save: string }>
   directories: string[]
+  /**
+   * Set when a command's save would hold a * or ? from the command itself, which would act as a wildcard and widen
+   * the grant. The request then offers no "always".
+   */
+  unsavable?: true
 }
 
 const ARITY: Record<string, number> = {
@@ -159,6 +164,44 @@ const ARITY: Record<string, number> = {
 }
 const PREFIX_LENGTH = Math.max(...Object.values(ARITY))
 
+// Commands that run their operands as another command. `operands` counts the operands before the command, such as
+// timeout's duration or chroot's directory, and `assignments` marks wrappers that take `NAME=value` words first.
+const WRAPPERS: Record<string, { operands?: number; assignments?: true }> = {
+  builtin: {},
+  busybox: {},
+  chronic: {},
+  chroot: { operands: 1 },
+  command: {},
+  coproc: {},
+  doas: {},
+  env: { assignments: true },
+  exec: {},
+  firejail: {},
+  flock: { operands: 1 },
+  ionice: {},
+  ltrace: {},
+  nice: {},
+  nocorrect: {},
+  noglob: {},
+  nohup: {},
+  setsid: {},
+  stdbuf: {},
+  strace: {},
+  sudo: { assignments: true },
+  time: {},
+  timeout: { operands: 1 },
+  unbuffer: {},
+  xargs: {},
+}
+// Commands that run scripts or re-split their operands, which no prefix of their words can pin.
+const SCRIPT_RUNNERS = new Set(["eval", "su", "watch"])
+const SHELLS = new Set(["ash", "bash", "dash", "ksh", "mksh", "sh", "zsh"])
+const FIND_ACTIONS = new Set([
+  ...["-exec", "-execdir", "-ok", "-okdir"],
+  ...["-delete", "-fls", "-fprint", "-fprint0", "-fprintf"],
+])
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/
+
 export function scan(command: string, shell: string, cwd: string): Effect.Effect<Result, Error> {
   return Effect.suspend(() => {
     const powershell = ShellSelect.ps(shell)
@@ -223,7 +266,9 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
         if (directoryCommand === parts && resolved.complete) continue
       }
       const selected = prefix(words.slice(0, PREFIX_LENGTH))
-      const conventional = `${selected.join(" ")} *`
+      const head = item.resource.slice(0, item.commandOffset ?? 0)
+      // A * or ? in the head would turn into a wildcard and widen the grant, so it keeps the bare prefix.
+      const conventional = `${/[*?]/.test(head) ? "" : head}${selected.join(" ")} *`
       const end = item.wordEnds?.[selected.length - 1]
       // Keep existing grants stable unless normalized spacing loses the original source boundary.
       const save =
@@ -239,9 +284,18 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
                 const separator = /^\s+(?:`(?:\r\n|\r|\n)\s*)?/.exec(item.resource.slice(boundary))?.[0]
                 return `${item.resource.slice(0, boundary)}${separator ?? " "}*`
               })()
+      // A wrapper saves itself with what it runs, never `<wrapper> *`. A redirect between its words, or a pattern that
+      // would hold a * or ? or not cover the command, saves the exact command.
+      const inner = powershell ? undefined : wrapped(item.words, item.rawWords)
+      const narrow = inner && item.redirectWordCount === undefined ? `${head}${inner.join(" ")}` : undefined
+      const exact =
+        inner !== undefined && (!narrow || /[*?]/.test(narrow) || !Wildcard.match(item.resource, `${narrow} *`))
+      const saved = inner === undefined ? save : exact ? item.resource : `${narrow} *`
+      // A * or ? from the command would act as a wildcard in the save, so the request offers no "always" instead.
+      if (/[*?]/.test(head) || /[*?]/.test(exact ? saved : saved.slice(0, -1))) output.unsavable = true
       output.commands.push({
         resource: item.resource,
-        save,
+        save: saved,
       })
     }
     return Effect.succeed(output)
@@ -606,4 +660,26 @@ function prefix(tokens: string[]) {
     if (arity !== undefined) return tokens.slice(0, arity)
   }
   return tokens.slice(0, 1)
+}
+
+/**
+ * The words "always" saves for a command that runs another, such as `timeout 10 git status`: the wrapper with what it
+ * runs. `null` means only the exact command can be saved, and `undefined` that the command wraps nothing.
+ */
+function wrapped(words: string[], raw: string[]): string[] | null | undefined {
+  const name = path.posix.basename(words[0] ?? "")
+  if (name === "find") return words.some((word) => FIND_ACTIONS.has(word)) ? null : undefined
+  if (SCRIPT_RUNNERS.has(name)) return null
+  // A shell running a script file saves it with that file, so it never covers `bash -c`. Options or a missing file
+  // mean an inline script or stdin.
+  if (SHELLS.has(name)) return words.length > 1 && !/^[-+]/.test(words[1]) ? raw.slice(0, 2) : null
+  const spec = WRAPPERS[name]
+  if (!spec) return
+  const assignments = spec.assignments ? words.slice(1).findIndex((word) => !ASSIGNMENT.test(word)) : 0
+  const start = 1 + (assignments < 0 ? words.length : assignments) + (spec.operands ?? 0)
+  // Options can take values or change what runs, so a wrapper with options, or without a command, saves exactly.
+  if (start >= words.length || words.slice(1, start + 1).some((word) => word.startsWith("-"))) return null
+  const inner = wrapped(words.slice(start), raw.slice(start))
+  if (inner === null) return null
+  return [...raw.slice(0, start), ...(inner ?? prefix(raw.slice(start, start + PREFIX_LENGTH)))]
 }

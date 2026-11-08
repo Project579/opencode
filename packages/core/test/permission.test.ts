@@ -761,6 +761,30 @@ describe("shell scanner permission impact", () => {
       nextEffect: ["allow", "allow"],
     },
     {
+      name: "assignment prefix",
+      shell: "bash",
+      command: "FOO=bar git status",
+      grants: [["FOO=bar git status *"], ["FOO=bar git status *"]],
+      repeat: [
+        ["allow", "allow"],
+        ["allow", "allow"],
+      ],
+      next: "git status",
+      nextEffect: ["ask", "ask"],
+    },
+    {
+      name: "leading redirect prefix",
+      shell: "bash",
+      command: "2>/dev/null curl -s https://example.com",
+      grants: [["2>/dev/null curl *"], ["2>/dev/null curl *"]],
+      repeat: [
+        ["allow", "allow"],
+        ["allow", "allow"],
+      ],
+      next: "curl -s https://example.com",
+      nextEffect: ["ask", "ask"],
+    },
+    {
       name: "assignment redirect prefix",
       shell: "bash",
       command: "FOO=bar > output; printf done",
@@ -840,4 +864,111 @@ describe("shell scanner permission impact", () => {
       }),
     )
   }
+})
+
+describe("shell always saves through wrapper commands", () => {
+  const request = (command: string) =>
+    Effect.gen(function* () {
+      const parsed = yield* ShellParse.scan(command, "bash", "/project")
+      // As the shell tool does, a request without a save offers no "always".
+      return assertion({
+        action: "shell",
+        resources: parsed.commands.map((item) => item.resource),
+        save: parsed.unsavable ? undefined : parsed.commands.map((item) => item.save),
+      })
+    })
+  const ask = (command: string) =>
+    Effect.gen(function* () {
+      const service = yield* Permission.Service
+      return yield* service.ask(yield* request(command))
+    })
+
+  it.live("saves the wrapper with what it runs, never the wrapper or the bare command alone", () =>
+    Effect.gen(function* () {
+      for (const [command, save] of [
+        ["timeout 10 git status", "timeout 10 git status *"],
+        ["sudo FOO=1 git status", "sudo FOO=1 git status *"],
+        ["env FOO=1 make", "env FOO=1 make *"],
+        ["FOO=bar git status", "FOO=bar git status *"],
+        ["FOO=1 env rm x", "FOO=1 env rm *"],
+        ["sudo env FOO=1 rm x", "sudo env FOO=1 rm *"],
+        ["nohup sleep 1", "nohup sleep *"],
+        ["echo x | xargs rm", "xargs rm *"],
+        ["bash script.sh", "bash script.sh *"],
+        ["bash script.sh a b", "bash script.sh *"],
+        ["find . -name x", "find *"],
+        // A wildcard only in what the wrapper runs, past the saved prefix, keeps "always".
+        ["timeout 5 rm *.tmp", "timeout 5 rm *"],
+      ] as const)
+        expect((yield* request(command)).save?.at(-1), command).toBe(save)
+    }),
+  )
+
+  it.live("saves the exact command when no narrow pattern applies", () =>
+    Effect.gen(function* () {
+      for (const command of [
+        "env 2>/dev/null git status",
+        "timeout 5 >/dev/null rm x",
+        "sudo -u root rm x",
+        "bash -c 'rm x'",
+        "bash -x script.sh",
+        "eval 'rm x'",
+        "watch git status",
+        "sudo -i",
+        "timeout 5",
+        "command -v rm",
+        "find . -exec rm {} \\;",
+        "find . -delete",
+      ])
+        expect((yield* request(command)).save, command).toEqual([command])
+    }),
+  )
+
+  it.live("offers no always when the save would hold a wildcard from the command", () =>
+    Effect.gen(function* () {
+      yield* setup([{ action: "shell", resource: "*", effect: "ask" }])
+      const service = yield* Permission.Service
+      const saved = yield* PermissionSaved.Service
+      for (const command of [
+        "env X=* rm x",
+        "git '*'",
+        "find . -name '*.log' -exec rm {} \\;",
+        "bash -c 'rm *.tmp'",
+        "bash -c 'rm ?'",
+        "FOO=* git status",
+        ">out* printf hello",
+      ]) {
+        const input = yield* request(command)
+        expect(input.save, command).toBeUndefined()
+        const first = yield* service.ask(input)
+        expect(first.effect, command).toBe("ask")
+        expect((yield* service.list())[0]?.save, command).toBeUndefined()
+        yield* service.reply({ requestID: first.id, reply: "always" })
+        const again = yield* ask(command)
+        expect(again.effect, command).toBe("ask")
+        yield* service.reply({ requestID: again.id, reply: "once" })
+      }
+      expect(yield* saved.list({ projectID: Project.ID.global })).toEqual([])
+    }),
+  )
+
+  it.live("always on a wrapped command allows neither other wrapped commands nor the bare command", () =>
+    Effect.gen(function* () {
+      yield* setup([{ action: "shell", resource: "*", effect: "ask" }])
+      const service = yield* Permission.Service
+      const saved = yield* PermissionSaved.Service
+      const first = yield* ask("timeout 10 git status")
+      expect(first.effect).toBe("ask")
+      yield* service.reply({ requestID: first.id, reply: "always" })
+      expect((yield* saved.list({ projectID: Project.ID.global })).map((rule) => rule.resource)).toEqual([
+        "timeout 10 git status *",
+      ])
+      expect((yield* ask("timeout 10 git status --short")).effect).toBe("allow")
+      for (const command of ["timeout 5 rm x", "git status"]) {
+        const result = yield* ask(command)
+        expect(result.effect, command).toBe("ask")
+        yield* service.reply({ requestID: result.id, reply: "once" })
+      }
+    }),
+  )
 })
