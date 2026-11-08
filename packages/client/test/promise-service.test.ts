@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { Service, type EnsureReason } from "../src/promise/service"
+import { Service, ServiceAutostartDisabledError, type EnsureReason } from "../src/promise/service"
+import { withEnsureTiming } from "../src/service-timing"
 import {
   catchesSigterm,
   expectNotListening,
@@ -357,3 +358,61 @@ test.skipIf(!catchesSigterm)(
   },
   20_000,
 )
+
+test("adopts a registered service of another version when autostart is off", async () => {
+  await using fixture = await serviceFixture()
+  const registration = fixture.registration
+  const existing = fixture.spawn("compatible")
+  await fixture.waitForFile()
+  const original = await Bun.file(registration).json()
+
+  const starts: EnsureReason[] = []
+  const endpoint = await ensure({
+    file: registration,
+    version: "test",
+    autostart: false,
+    command: fixture.command("delayed", "10"),
+    onStart: (reason) => starts.push(reason),
+  })
+
+  expect(endpoint.url).toBe(original.url)
+  expect(starts).toEqual([])
+  expect(existing.exitCode).toBe(null)
+  expect(await Bun.file(registration).json()).toEqual(original)
+})
+
+test("fails without starting a service when none is registered and autostart is off", async () => {
+  await using fixture = await serviceFixture()
+  const registration = fixture.registration
+
+  const error = await ensure({
+    file: registration,
+    autostart: false,
+    command: fixture.command("record-start"),
+  }).catch((cause: unknown) => cause)
+
+  expect(error).toBeInstanceOf(ServiceAutostartDisabledError)
+  expect(await Bun.file(registration + ".started").exists()).toBe(false)
+  expect(await Bun.file(registration).exists()).toBe(false)
+})
+
+test("keeps retrying an unresponsive registered service when autostart is off", async () => {
+  await using fixture = await serviceFixture()
+  const registration = fixture.registration
+  const existing = fixture.spawn("hanging")
+  await fixture.waitForFile()
+  const original = await Bun.file(registration).json()
+
+  const error = await Service.ensure(
+    withEnsureTiming(
+      { file: registration, version: "test", autostart: false, command: fixture.command("record-start") },
+      { pollInterval: 10, requestTimeout: 50, promiseTimeout: 600 },
+    ),
+  ).catch((cause: unknown) => cause)
+
+  expect(error).toBeInstanceOf(ServiceAutostartDisabledError)
+  expect((await Bun.file(registration + ".requests").text()).trim().split("\n").length).toBeGreaterThan(3)
+  expect(existing.exitCode).toBe(null)
+  expect(await Bun.file(registration + ".started").exists()).toBe(false)
+  expect(await Bun.file(registration).json()).toEqual(original)
+})

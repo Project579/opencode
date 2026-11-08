@@ -2,7 +2,8 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { expect, test } from "bun:test"
 import { Effect, FileSystem } from "effect"
 import { writeFile } from "node:fs/promises"
-import { Service, type EnsureReason } from "../src/effect/service"
+import { Service, ServiceAutostartDisabledError, type EnsureReason } from "../src/effect/service"
+import { withEnsureTiming } from "../src/service-timing"
 import {
   catchesSigterm,
   expectNotListening,
@@ -173,6 +174,74 @@ test("reports a failed registered service without spawning", async () => {
     "Background service failed to start",
   )
   expect(process.exitCode).toBe(null)
+})
+
+test("adopts a registered service of another version when autostart is off", async () => {
+  await using fixture = await serviceFixture()
+  const registration = fixture.registration
+  const existing = fixture.spawn("compatible")
+  await fixture.waitForFile()
+  const original = await Bun.file(registration).json()
+
+  const starts: EnsureReason[] = []
+  const endpoint = await run(
+    ensure({
+      file: registration,
+      version: "test",
+      autostart: false,
+      command: fixture.command("delayed", "10"),
+      onStart: (reason) => starts.push(reason),
+    }),
+  )
+
+  expect(endpoint.url).toBe(original.url)
+  expect(starts).toEqual([])
+  expect(existing.exitCode).toBe(null)
+  expect(await Bun.file(registration).json()).toEqual(original)
+})
+
+test("fails without starting a service when none is registered and autostart is off", async () => {
+  await using fixture = await serviceFixture()
+  const registration = fixture.registration
+
+  const starts: EnsureReason[] = []
+  const error = await run(
+    ensure({
+      file: registration,
+      autostart: false,
+      command: fixture.command("record-start"),
+      onStart: (reason) => starts.push(reason),
+    }),
+  ).catch((cause: unknown) => cause)
+
+  expect(error).toBeInstanceOf(ServiceAutostartDisabledError)
+  expect(String(error)).toContain("OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART")
+  expect(starts).toEqual([])
+  expect(await Bun.file(registration + ".started").exists()).toBe(false)
+  expect(await Bun.file(registration).exists()).toBe(false)
+})
+
+test("keeps retrying an unresponsive registered service when autostart is off", async () => {
+  await using fixture = await serviceFixture()
+  const registration = fixture.registration
+  const existing = fixture.spawn("hanging")
+  await fixture.waitForFile()
+  const original = await Bun.file(registration).json()
+
+  const error = await run(
+    Service.ensure(
+      withEnsureTiming(
+        { file: registration, version: "test", autostart: false, command: fixture.command("record-start") },
+        { pollInterval: 10, requestTimeout: 50, promiseTimeout: 600 },
+      ),
+    ),
+  ).catch((cause: unknown) => cause)
+
+  expect(error).toBeInstanceOf(ServiceAutostartDisabledError)
+  expect((await Bun.file(registration + ".requests").text()).trim().split("\n").length).toBeGreaterThan(3)
+  expect(existing.exitCode).toBe(null)
+  expect(await Bun.file(registration + ".started").exists()).toBe(false)
+  expect(await Bun.file(registration).json()).toEqual(original)
 })
 
 test("evicts an unresponsive registered service before starting its replacement", async () => {

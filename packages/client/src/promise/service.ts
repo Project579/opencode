@@ -1,5 +1,12 @@
 import { readFile, rm } from "node:fs/promises"
-import type { DiscoverOptions, Endpoint, Info, EnsureOptions, StopOptions } from "../service.js"
+import {
+  ServiceAutostartDisabledError,
+  type DiscoverOptions,
+  type Endpoint,
+  type Info,
+  type EnsureOptions,
+  type StopOptions,
+} from "../service.js"
 import { contenderPool, spawnServiceContender } from "../service-contender.js"
 import { defaultEnsureTiming, ensureTiming, type EnsureTiming } from "../service-timing.js"
 import { matchesVersion } from "../service-version.js"
@@ -29,6 +36,8 @@ export async function ensure(options: EnsureOptions = {}): Promise<Endpoint> {
   const timing = ensureTiming(options)
   const deadline = Date.now() + timing.promiseTimeout
   const pool = contenderPool(timing)
+  // Without autostart, nothing may replace the registered service, so no version requirement applies.
+  const requirement = options.autostart === false ? {} : options
   let timeouts: { readonly info: Info; readonly count: number } | undefined
   let announced = false
 
@@ -50,14 +59,21 @@ export async function ensure(options: EnsureOptions = {}): Promise<Endpoint> {
   try {
     while (true) {
       if (Date.now() >= deadline)
-        throw pool.failure() ?? new Error("Timed out waiting for the background service to start")
+        throw (
+          pool.failure() ??
+          (options.autostart === false
+            ? new ServiceAutostartDisabledError()
+            : new Error("Timed out waiting for the background service to start"))
+        )
       const registration = await registered(options.file, timing.requestTimeout)
       if (registration.timedOut && registration.info !== undefined) {
         timeouts = {
           info: registration.info,
           count: timeouts !== undefined && same(timeouts.info, registration.info) ? timeouts.count + 1 : 1,
         }
-        if (timeouts.count >= 3) {
+        if (timeouts.count === 3 && options.autostart === false)
+          console.warn("Background service is unresponsive; automatic start is off, so it is not replaced")
+        if (timeouts.count >= 3 && options.autostart !== false) {
           announce("missing")
           console.warn("Background service is unresponsive; recovery cannot preserve persistent terminals")
           await PtyHandoff.clear(options.file ?? fallback())
@@ -71,7 +87,7 @@ export async function ensure(options: EnsureOptions = {}): Promise<Endpoint> {
       if (registration.service !== undefined) {
         pool.serviceAnswered()
         const service = registration.service
-        const decision = decide(service, options)
+        const decision = decide(service, requirement)
         if (decision._tag === "fail") throw decision.error
         if (decision._tag === "reuse") {
           await PtyHandoff.complete(options.file ?? fallback(), service.info)
@@ -87,7 +103,9 @@ export async function ensure(options: EnsureOptions = {}): Promise<Endpoint> {
       } else {
         const failed = pool.reap()
         if (failed !== undefined) throw failed
-        if (pool.shouldRecruit(registration.info !== undefined)) {
+        // A registered service that does not answer yet may still be starting; keep polling it until the deadline.
+        if (options.autostart === false && registration.info === undefined) throw new ServiceAutostartDisabledError()
+        if (options.autostart !== false && pool.shouldRecruit(registration.info !== undefined)) {
           announce("missing")
           pool.add(await spawnContender())
         }

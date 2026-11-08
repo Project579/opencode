@@ -1,5 +1,10 @@
 import { Effect, FileSystem, Option, Schedule, Schema } from "effect"
-import type { DiscoverOptions, EnsureOptions, StopOptions } from "../service.js"
+import {
+  ServiceAutostartDisabledError,
+  type DiscoverOptions,
+  type EnsureOptions,
+  type StopOptions,
+} from "../service.js"
 import { contenderPool, spawnServiceContender } from "../service-contender.js"
 import { defaultEnsureTiming, ensureTiming, type EnsureTiming } from "../service-timing.js"
 import { matchesVersion } from "../service-version.js"
@@ -45,10 +50,13 @@ export const incumbent = Effect.fn("service.incumbent")(function* (
 // Idempotent ensure-running: reuses a healthy compatible server, replaces a
 // version-mismatched one, and otherwise spawns small contenders until a server
 // becomes discoverable. A contender is never killed merely for slow startup.
+// With `autostart: false` it only adopts what is registered: no spawn, replacement, or signal.
 /** Ensure a healthy, compatible local service is running. */
 export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOptions = {}) {
   const timing = ensureTiming(options)
   const pool = contenderPool(timing)
+  // Without autostart, nothing may replace the registered service, so no version requirement applies.
+  const requirement = options.autostart === false ? {} : options
   let timeouts: { readonly info: Info; readonly count: number } | undefined
   let announced = false
   const announce = (reason: "missing" | "version-mismatch", previousVersion?: string) =>
@@ -77,7 +85,9 @@ export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOpti
         info,
         count: timeouts !== undefined && same(timeouts.info, info) ? timeouts.count + 1 : 1,
       }
-      if (timeouts.count >= 3) {
+      if (timeouts.count === 3 && options.autostart === false)
+        yield* Effect.logWarning("Background service is unresponsive; automatic start is off, so it is not replaced")
+      if (timeouts.count >= 3 && options.autostart !== false) {
         yield* announce("missing")
         yield* Effect.logWarning("Background service is unresponsive; recovery cannot preserve persistent terminals")
         yield* Effect.tryPromise(() => PtyHandoff.clear(options.file ?? fallback()))
@@ -89,7 +99,7 @@ export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOpti
     } else timeouts = undefined
     if (service !== undefined) {
       pool.serviceAnswered()
-      const decision = decide(service, options)
+      const decision = decide(service, requirement)
       if (decision._tag === "fail") return yield* Effect.fail(decision.error)
       if (decision._tag === "reuse") {
         yield* Effect.tryPromise(() => PtyHandoff.complete(options.file ?? fallback(), service.info))
@@ -107,6 +117,11 @@ export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOpti
 
     const failed = pool.reap()
     if (failed !== undefined) return yield* Effect.fail(failed)
+    if (options.autostart === false) {
+      // A registered service that does not answer yet may still be starting; keep polling it until the deadline.
+      if (info === undefined) return yield* Effect.fail(new ServiceAutostartDisabledError())
+      return Option.none()
+    }
     if (pool.shouldRecruit(info !== undefined)) {
       yield* announce("missing")
       pool.add(yield* spawnContender)
@@ -122,7 +137,12 @@ export const ensure = Effect.fn("service.ensure")(function* (options: EnsureOpti
     Effect.ensuring(Effect.sync(() => pool.releaseAll())),
   )
   if (Option.isNone(found))
-    return yield* Effect.fail(pool.failure() ?? new Error("Timed out waiting for the background service to start"))
+    return yield* Effect.fail(
+      pool.failure() ??
+        (options.autostart === false
+          ? new ServiceAutostartDisabledError()
+          : new Error("Timed out waiting for the background service to start")),
+    )
   return found.value.endpoint
 })
 

@@ -9,6 +9,7 @@ import { BackgroundServiceMachine } from "./background-service-machine"
 import { cleanStages } from "./cli-stages"
 import { keptStages, serviceVersion, shouldRetryEnsure } from "./cli-version"
 import { DesktopCli } from "./desktop-cli"
+import { serviceAutostart } from "./service-autostart"
 import { SidecarCredentials } from "./sidecar-credentials"
 import { takeSidecarProbe } from "./sidecar-probe"
 
@@ -62,6 +63,7 @@ const ensure = Effect.fn("BackgroundService.ensure")(function* (mode: Background
     setup.client.Service.ensure({
       file: setup.file,
       version,
+      autostart: setup.autostart,
       // A fixed port makes a second contender fail to bind and back off; port 0 never collides, so two
       // services could boot against the same database.
       command: [
@@ -117,7 +119,14 @@ const prepare = Effect.fn("BackgroundService.prepare")(function* (mode: Backgrou
         )
       : undefined
 
-  return { cli, client, file, isolated, version }
+  return {
+    cli,
+    client,
+    file,
+    isolated,
+    version,
+    autostart: serviceAutostart(process.env.OPENCODE_EXPERIMENTAL_SERVICE_AUTOSTART),
+  }
 })
 
 const adopt = Effect.fn("BackgroundService.adopt")(function* (

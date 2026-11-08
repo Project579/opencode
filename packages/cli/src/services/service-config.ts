@@ -6,6 +6,7 @@ import { Effect, FileSystem, Option, Schedule, Schema } from "effect"
 import { randomBytes } from "crypto"
 import path from "path"
 import { selfCommand } from "../util/process"
+import { Env } from "../env"
 import { RemoteTunnel } from "./remote-tunnel"
 
 // The CLI's service configuration file, plus the Service.EnsureOptions binding that
@@ -148,6 +149,7 @@ export const options = Effect.fnUntraced(function* (input: { readonly checkVersi
     version: input.checkVersion ? OPENCODE_VERSION : undefined,
     env: processEnv((yield* read()).env),
     command: [...selfCommand(), "serve", "--service"],
+    autostart: yield* Env.serviceAutostart,
   }
 })
 
