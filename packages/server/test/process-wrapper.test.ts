@@ -4,9 +4,11 @@ import os from "node:os"
 import path from "node:path"
 import { afterAll, describe, expect } from "bun:test"
 import { NodeHttpServer } from "@effect/platform-node"
+import { Formatter } from "@opencode/core/formatter"
 import { Location } from "@opencode/core/location"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { Mcp } from "@opencode/core/mcp/index"
+import { Plugin } from "@opencode/core/plugin"
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { AppProcess } from "@opencode/util/process"
@@ -43,7 +45,7 @@ const serve = Effect.fnUntraced(function* (wrapper: ReadonlyArray<string>, confi
   return {
     directory,
     base: HttpServer.formatAddress(http.address),
-    inLocation: <A, E>(effect: Effect.Effect<A, E, Mcp.Service>) =>
+    inLocation: <A, E>(effect: Effect.Effect<A, E, Mcp.Service | Formatter.Service | Plugin.Service>) =>
       effect.pipe(
         Effect.provide(
           LocationServiceMap.Service.get(
@@ -118,6 +120,49 @@ describe.skipIf(process.platform === "win32")("experimental.process.wrapper", ()
         expect(found[0]).toContain("printf wrapped")
         expect(found[0]).not.toContain("record-wrapper.sh")
       }),
+    20_000,
+  )
+
+  it.live(
+    "wraps a configured formatter when the host already built AppProcess, as the CLI does",
+    () =>
+      Effect.gen(function* () {
+        const log = path.join((yield* tmpdirScoped("opencode-process-wrapper-log-")).path, "wrapper.log")
+        const server = yield* serve([wrapperScript, log], {
+          formatter: { probe: { command: ["true", "$FILE"], extensions: [".txt"] } },
+        })
+        const file = path.join(server.directory, "note.txt")
+        yield* Effect.promise(() => fs.writeFile(file, "note\n"))
+        const formatted = yield* server.inLocation(
+          Effect.gen(function* () {
+            const plugins = yield* Plugin.Service
+            yield* plugins.awaitActivation
+            const formatter = yield* Formatter.Service
+            return yield* formatter.file(file)
+          }),
+        )
+        expect(formatted).toBe(true)
+        expect(yield* lines(log)).toEqual([`true ${file}`])
+        // `opencode serve` builds AppProcess for itself before it starts the server (packages/cli/src/server-process.ts).
+      }).pipe(Effect.provide(LayerNode.compile(AppProcess.node))),
+    20_000,
+  )
+
+  it.live(
+    "wraps git run by vcs.init when the host already built AppProcess",
+    () =>
+      Effect.gen(function* () {
+        const log = path.join((yield* tmpdirScoped("opencode-process-wrapper-log-")).path, "wrapper.log")
+        const server = yield* serve([wrapperScript, log], {})
+        const response = yield* Effect.promise(() =>
+          fetch(
+            new URL(`/api/vcs/init?${new URLSearchParams({ "location[directory]": server.directory })}`, server.base),
+            { method: "POST", headers },
+          ),
+        )
+        expect(response.status).toBe(204)
+        expect((yield* lines(log)).filter((line) => /(^|\/)git init$/.test(line))).toHaveLength(1)
+      }).pipe(Effect.provide(LayerNode.compile(AppProcess.node))),
     20_000,
   )
 

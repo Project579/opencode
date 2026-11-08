@@ -160,7 +160,16 @@ function makeRoutes<AuthError, AuthServices>(
       ...(instances ? [Instance.node.replace(instances(() => replacements))] : []),
       ...overrides,
     ]
-    return AppNodeBuilder.build(applicationServices, replacements)
+    // Build on a root memo map. Effect memoizes a Layer by identity, whatever it was provided with, so a node the
+    // host already built (the CLI builds AppProcess before it starts a server) would otherwise be reused here
+    // without these replacements, such as the process wrapper.
+    return Layer.fromBuild((_, scope) =>
+      Layer.buildWithMemoMap(
+        AppNodeBuilder.build(applicationServices, replacements),
+        Layer.makeMemoMapUnsafe(),
+        scope,
+      ).pipe(Effect.map(Context.omit(Layer.CurrentMemoMap))),
+    )
   }
   const serviceLayer = options.simulation
     ? Layer.unwrap(
