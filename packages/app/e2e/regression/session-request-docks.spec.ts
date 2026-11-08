@@ -297,10 +297,10 @@ for (const [name, type, expected] of [
           {
             id: "permission-request",
             sessionID,
-            permission: "shell",
-            patterns: ["git push"],
+            action: "shell",
+            resources: ["git push"],
+            save: [],
             metadata: {},
-            always: [],
           },
         ],
       },
