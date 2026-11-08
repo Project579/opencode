@@ -170,7 +170,10 @@ const layer = Layer.effect(
       const session = yield* sessions.get(sessionID)
       if (!session) return yield* new SessionErrors.NotFoundError({ sessionID })
       const agent = yield* agents.resolve(agentID ?? session.agent)
-      return merge(agent?.permissions ?? missingAgentPermissions, session.permissions ?? [])
+      return {
+        parentID: session.parentID,
+        rules: merge(agent?.permissions ?? missingAgentPermissions, session.permissions ?? []),
+      }
     })
 
     function denied(input: Pick<Request, "action" | "resources">, rules: Permission.Ruleset) {
@@ -182,9 +185,19 @@ const layer = Layer.effect(
     }
 
     const evaluateInput = Effect.fnUntraced(function* (input: AssertInput) {
-      const rules = yield* configured(input.sessionID, input.agent)
-      if (denied(input, rules)) return { effect: "deny" as const, rules }
-      const all = [...rules, ...(yield* savedRules())]
+      const own = yield* configured(input.sessionID, input.agent)
+      if (denied(input, own.rules)) return { effect: "deny" as const, rules: own.rules }
+      // A child Session may never do what an ancestor denies under its own agent and Session rules.
+      // Each ancestor is checked separately because merging would let the child's allows override
+      // the ancestor's denies. Only denies carry over; an ancestor's ask or allow leaves the child's
+      // own rules in charge.
+      let parentID = own.parentID
+      while (parentID) {
+        const parent = yield* configured(parentID)
+        if (denied(input, parent.rules)) return { effect: "deny" as const, rules: parent.rules }
+        parentID = parent.parentID
+      }
+      const all = [...own.rules, ...(yield* savedRules())]
       const effects = input.resources.map((resource) => evaluate(input.action, resource, all).effect)
       const effect: Permission.Effect = effects.includes("ask") ? "ask" : "allow"
       const event = yield* hooks.trigger("permission", "evaluate", {

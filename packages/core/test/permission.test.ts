@@ -841,3 +841,183 @@ describe("shell scanner permission impact", () => {
     )
   }
 })
+
+describe("Permission in child sessions", () => {
+  const plan = "/home/.opencode/plan"
+
+  function family(input: {
+    agents: Record<string, Permission.Ruleset>
+    sessions: ReadonlyArray<{ id: string; agent: string; parentID?: string; permission?: Permission.Ruleset }>
+  }) {
+    return Effect.gen(function* () {
+      yield* setup()
+      const { db } = yield* Database.Service
+      const agents = yield* Agent.Service
+      yield* agents.transform((editor) =>
+        Object.entries(input.agents).forEach(([id, rules]) =>
+          editor.update(Agent.ID.make(id), (agent) => {
+            agent.permissions = [...rules]
+          }),
+        ),
+      )
+      yield* Effect.forEach(input.sessions, (session) =>
+        db
+          .insert(SessionTable)
+          .values({
+            id: Session.ID.make(session.id),
+            project_id: Project.ID.global,
+            parent_id: session.parentID === undefined ? undefined : Session.ID.make(session.parentID),
+            slug: session.id,
+            directory: "/project",
+            title: session.id,
+            version: "test",
+            agent: Agent.ID.make(session.agent),
+            permission: session.permission,
+          })
+          .run()
+          .pipe(Effect.orDie),
+      )
+      return yield* Permission.Service
+    })
+  }
+
+  const edit = (sessionID: string, resource: string) =>
+    assertion({ sessionID: Session.ID.make(sessionID), action: "edit", resources: [resource] })
+
+  it.effect("denies a child what its parent's agent denies", () =>
+    Effect.gen(function* () {
+      const service = yield* family({
+        agents: {
+          readonly: [
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "edit", resource: "*", effect: "deny" },
+          ],
+          general: [{ action: "*", resource: "*", effect: "allow" }],
+        },
+        sessions: [
+          { id: "ses_parent", agent: "readonly" },
+          { id: "ses_child", agent: "general", parentID: "ses_parent" },
+        ],
+      })
+
+      expect(yield* service.ask(edit("ses_child", "/project/README.md"))).toMatchObject({ effect: "deny" })
+      expect(yield* service.assert(edit("ses_child", "/project/README.md")).pipe(Effect.flip)).toBeInstanceOf(
+        Permission.BlockedError,
+      )
+      expect(yield* service.ask(assertion({ sessionID: Session.ID.make("ses_child") }))).toMatchObject({
+        effect: "allow",
+      })
+      expect(yield* service.list()).toEqual([])
+    }),
+  )
+
+  it.effect("limits a Plan child to the Plan directory", () =>
+    Effect.gen(function* () {
+      const service = yield* family({
+        agents: {
+          plan: [
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "question", resource: "*", effect: "allow" },
+            { action: "edit", resource: "*", effect: "deny" },
+            { action: "edit", resource: `${plan}/*`, effect: "allow" },
+          ],
+          general: [{ action: "*", resource: "*", effect: "allow" }],
+          explore: [{ action: "*", resource: "*", effect: "deny" }],
+        },
+        sessions: [
+          { id: "ses_plan", agent: "plan" },
+          { id: "ses_general", agent: "general", parentID: "ses_plan" },
+          { id: "ses_explore", agent: "explore", parentID: "ses_plan" },
+        ],
+      })
+
+      expect(yield* service.ask(edit("ses_general", "/project/README.md"))).toMatchObject({ effect: "deny" })
+      expect(yield* service.ask(edit("ses_general", `${plan}/feature.md`))).toMatchObject({ effect: "allow" })
+      // The parent's carve-out never widens the child's own rules.
+      expect(yield* service.ask(edit("ses_explore", `${plan}/feature.md`))).toMatchObject({ effect: "deny" })
+    }),
+  )
+
+  it.effect("denies a grandchild what any ancestor denies", () =>
+    Effect.gen(function* () {
+      const service = yield* family({
+        agents: {
+          readonly: [
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "edit", resource: "*", effect: "deny" },
+          ],
+          general: [{ action: "*", resource: "*", effect: "allow" }],
+        },
+        sessions: [
+          { id: "ses_root", agent: "readonly" },
+          { id: "ses_child", agent: "general", parentID: "ses_root" },
+          { id: "ses_grandchild", agent: "general", parentID: "ses_child" },
+          { id: "ses_other", agent: "general" },
+          // Explicit child rules replace the inherited copy; the parent's own Session rules still apply.
+          {
+            id: "ses_shell",
+            agent: "general",
+            parentID: "ses_other",
+            permission: [{ action: "*", resource: "*", effect: "allow" }],
+          },
+        ],
+      })
+      const { db } = yield* Database.Service
+      yield* db
+        .update(SessionTable)
+        .set({ permission: [{ action: "shell", resource: "*", effect: "deny" }] })
+        .where(eq(SessionTable.id, Session.ID.make("ses_other")))
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(yield* service.ask(edit("ses_grandchild", "/project/README.md"))).toMatchObject({ effect: "deny" })
+      expect(
+        yield* service.ask(
+          assertion({ sessionID: Session.ID.make("ses_shell"), action: "shell", resources: ["rm -rf /"] }),
+        ),
+      ).toMatchObject({ effect: "deny" })
+    }),
+  )
+
+  it.effect("leaves a Session without a parent unchanged", () =>
+    Effect.gen(function* () {
+      const service = yield* family({
+        agents: {
+          readonly: [
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "edit", resource: "*", effect: "deny" },
+          ],
+          general: [{ action: "*", resource: "*", effect: "allow" }],
+        },
+        sessions: [
+          { id: "ses_parent", agent: "readonly" },
+          { id: "ses_root", agent: "general" },
+        ],
+      })
+
+      expect(yield* service.ask(edit("ses_root", "/project/README.md"))).toMatchObject({ effect: "allow" })
+    }),
+  )
+
+  it.effect("leaves a child unchanged when its parent denies nothing", () =>
+    Effect.gen(function* () {
+      const service = yield* family({
+        agents: {
+          cautious: [{ action: "edit", resource: "*", effect: "ask" }],
+          general: [{ action: "*", resource: "*", effect: "allow" }],
+          reviewer: [{ action: "edit", resource: "*", effect: "deny" }],
+        },
+        sessions: [
+          { id: "ses_parent", agent: "cautious" },
+          { id: "ses_general", agent: "general", parentID: "ses_parent" },
+          { id: "ses_reviewer", agent: "reviewer", parentID: "ses_parent" },
+        ],
+      })
+
+      // Only denies carry over: the parent's ask does not make its child ask.
+      expect(yield* service.ask(edit("ses_general", "/project/README.md"))).toMatchObject({ effect: "allow" })
+      expect(yield* service.ask(edit("ses_reviewer", "/project/README.md"))).toMatchObject({ effect: "deny" })
+      expect(yield* service.list()).toEqual([])
+    }),
+  )
+})
