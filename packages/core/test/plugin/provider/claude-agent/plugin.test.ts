@@ -43,7 +43,7 @@ const haiku = Model.Ref.make({ providerID: ClaudeProvider.ID, id: Model.ID.make(
 const addPlugin = Effect.fn(function* (io: ClaudeIO.Interface) {
   const registry = ClaudeSessions.registry()
   yield* Effect.addFinalizer(() => registry.close())
-  const host = yield* PluginHost.make(yield* Plugin.Service, ID)
+  const host = yield* PluginHost.make(yield* Plugin.Service, ID, { type: "builtin" })
   yield* make(io, registry).effect(host)
   return registry
 })

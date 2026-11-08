@@ -200,7 +200,7 @@ const start = Effect.fnUntraced(function* (console: ReturnType<typeof fakeConsol
 })
 
 const location = Effect.fnUntraced(function* () {
-  const real = yield* PluginHost.make(yield* Plugin.Service, "test")
+  const real = yield* PluginHost.make(yield* Plugin.Service, "test", { type: "builtin" })
   const wakes = new Array<Synthetic>()
   const replays = new Array<Synthetic>()
   // Admitted for real, but never resumed: the test has no model to run. A message ID used before fails as the session

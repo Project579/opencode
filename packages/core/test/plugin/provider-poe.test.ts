@@ -48,7 +48,7 @@ const fixture = Effect.gen(function* () {
     editor.models.update(providerID, modelID, () => {})
   })
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test")
+  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
   yield* PoePlugin.effect(host).pipe(Effect.provideService(HttpClient.HttpClient, http))
   const status = (attemptID: Integration.AttemptID) =>
     integrations.oauth.status({ integrationID, attemptID }).pipe(

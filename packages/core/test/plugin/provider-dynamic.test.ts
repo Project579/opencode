@@ -30,7 +30,7 @@ function npmPackage(directory = "") {
 
 const addPlugin = Effect.fn(function* (npm?: Npm.Interface) {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test")
+  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
   yield* DynamicProviderPlugin.effect(host).pipe(Effect.provideService(Npm.Service, npm ?? (yield* Npm.Service)))
 })
 

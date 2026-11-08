@@ -39,7 +39,7 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test")
+  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
   yield* OpencodePlugin.effect(host)
 })
 
@@ -1682,56 +1682,58 @@ describe("OpencodePlugin", () => {
     }),
   )
 
-  it.effect("applies Console policies while its instructions and skills fail, and keeps a list over a malformed one", () =>
-    Effect.gen(function* () {
-      const credentials = yield* Credential.Service
-      const config = yield* Config.Service
-      const discovery = yield* InstructionDiscovery.Service
-      const sudo: ConfigPolicy.Info = { action: "tool.use", resource: "shell:sudo *", effect: "deny" }
-      const state: { lists: "down" | "ok" | "malformed" } = { lists: "down" }
-      const server = {
-        fetch: (request: Request) => {
-          const path = new URL(request.url).pathname
-          if (path === "/api/v2/config") return Response.json({ providers: {}, policies: [sudo] })
-          if (path !== "/api/v2/instructions" && path !== "/api/v2/skills") return new Response(null, { status: 404 })
-          if (state.lists === "down") return new Response("Unavailable", { status: 503 })
-          if (path === "/api/v2/skills") return Response.json({ skills: [] })
-          if (state.lists === "malformed") return Response.json({ instructions: [{ id: "style" }] })
-          return Response.json({ instructions: [{ id: "style", content: "Use tabs." }] })
-        },
-      }
-      const instructions = discovery
-        .list()
-        .pipe(
-          Effect.map((files) =>
-            Array.isArray(files)
-              ? files.filter((file) => file.path.startsWith("OpenCode Console")).map((file) => file.content)
-              : [],
-          ),
-        )
-      yield* credentials.create({
-        integrationID: Integration.ID.make("opencode"),
-        value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: "https://console.test" } }),
-      })
+  it.effect(
+    "applies Console policies while its instructions and skills fail, and keeps a list over a malformed one",
+    () =>
+      Effect.gen(function* () {
+        const credentials = yield* Credential.Service
+        const config = yield* Config.Service
+        const discovery = yield* InstructionDiscovery.Service
+        const sudo: ConfigPolicy.Info = { action: "tool.use", resource: "shell:sudo *", effect: "deny" }
+        const state: { lists: "down" | "ok" | "malformed" } = { lists: "down" }
+        const server = {
+          fetch: (request: Request) => {
+            const path = new URL(request.url).pathname
+            if (path === "/api/v2/config") return Response.json({ providers: {}, policies: [sudo] })
+            if (path !== "/api/v2/instructions" && path !== "/api/v2/skills") return new Response(null, { status: 404 })
+            if (state.lists === "down") return new Response("Unavailable", { status: 503 })
+            if (path === "/api/v2/skills") return Response.json({ skills: [] })
+            if (state.lists === "malformed") return Response.json({ instructions: [{ id: "style" }] })
+            return Response.json({ instructions: [{ id: "style", content: "Use tabs." }] })
+          },
+        }
+        const instructions = discovery
+          .list()
+          .pipe(
+            Effect.map((files) =>
+              Array.isArray(files)
+                ? files.filter((file) => file.path.startsWith("OpenCode Console")).map((file) => file.content)
+                : [],
+            ),
+          )
+        yield* credentials.create({
+          integrationID: Integration.ID.make("opencode"),
+          value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: "https://console.test" } }),
+        })
 
-      // Once the lists' retries run out, startup still applies the config's policies, just without the lists.
-      const started = yield* addPlugin().pipe(inProcess(server), Effect.forkChild({ startImmediately: true }))
-      yield* TestClock.adjust("10 seconds")
-      yield* Fiber.join(started)
-      expect(yield* consolePolicies(config)).toEqual([sudo])
-      expect(yield* instructions).toEqual([])
+        // Once the lists' retries run out, startup still applies the config's policies, just without the lists.
+        const started = yield* addPlugin().pipe(inProcess(server), Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust("10 seconds")
+        yield* Fiber.join(started)
+        expect(yield* consolePolicies(config)).toEqual([sudo])
+        expect(yield* instructions).toEqual([])
 
-      state.lists = "ok"
-      yield* TestClock.adjust("1 minute")
-      yield* drain
-      expect(yield* instructions).toEqual(["Use tabs."])
+        state.lists = "ok"
+        yield* TestClock.adjust("1 minute")
+        yield* drain
+        expect(yield* instructions).toEqual(["Use tabs."])
 
-      state.lists = "malformed"
-      yield* TestClock.adjust("1 minute")
-      yield* drain
-      expect(yield* instructions).toEqual(["Use tabs."])
-      expect(yield* consolePolicies(config)).toEqual([sudo])
-    }),
+        state.lists = "malformed"
+        yield* TestClock.adjust("1 minute")
+        yield* drain
+        expect(yield* instructions).toEqual(["Use tabs."])
+        expect(yield* consolePolicies(config)).toEqual([sudo])
+      }),
   )
 
   it.effect("requests Console instructions and skills together", () =>
@@ -2168,7 +2170,7 @@ describe("OpencodePlugin with a Console config", () => {
               metadata: { server: server.url.origin, orgID: "org_acme", orgName: "Acme" },
             }),
           })
-          const host = yield* PluginHost.make(yield* Plugin.Service, "test")
+          const host = yield* PluginHost.make(yield* Plugin.Service, "test", { type: "builtin" })
           yield* OpencodePlugin.effect(host).pipe(inProcess(server))
           yield* ConfigPolicyPlugin.Plugin.effect(host)
 
@@ -2337,7 +2339,7 @@ describe("OpencodePlugin with a Console config", () => {
             integrationID: Integration.ID.make("opencode"),
             value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: server.url.origin } }),
           })
-          const host = yield* PluginHost.make(yield* Plugin.Service, "test")
+          const host = yield* PluginHost.make(yield* Plugin.Service, "test", { type: "builtin" })
           yield* OpencodePlugin.effect(host)
           yield* ConfigProviderPlugin.Plugin.effect(host)
 
@@ -2387,7 +2389,7 @@ describe("OpencodePlugin with a Console config", () => {
             integrationID: Integration.ID.make("opencode"),
             value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: server.url.origin } }),
           })
-          const host = yield* PluginHost.make(yield* Plugin.Service, "test")
+          const host = yield* PluginHost.make(yield* Plugin.Service, "test", { type: "builtin" })
           // Registered in production order: the OpenCode and OpenAI provider plugins, then config in `post`.
           yield* OpencodePlugin.effect(host).pipe(inProcess(server))
           yield* OpenAIPlugin.effect(host)
@@ -2436,7 +2438,7 @@ describe("OpencodePlugin with a Console config", () => {
             integrationID: Integration.ID.make("opencode"),
             value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: server.url.origin } }),
           })
-          const host = yield* PluginHost.make(yield* Plugin.Service, "test")
+          const host = yield* PluginHost.make(yield* Plugin.Service, "test", { type: "builtin" })
           yield* OpencodePlugin.effect(host).pipe(inProcess(server))
           yield* ConfigWebSearchPlugin.Plugin.effect(host)
           // A workspace without hosted search, or a member its policy denies, would get only failed searches.

@@ -135,6 +135,7 @@ const tools = Layer.mock(Tool.Service, {
       execute: () => Effect.die(new Error("unused")),
     }),
   transform: () => Effect.die(new Error("unused")),
+  installed: () => () => Effect.die(new Error("unused")),
 })
 
 const it = testEffect(

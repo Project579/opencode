@@ -53,7 +53,7 @@ const isPublicEvent = (event: Event.Payload): event is EventManifest.ServerEvent
 export const make = Effect.fn("PluginHost.make")(function* (
   plugin: Pick<Interface, "list">,
   pluginID: string,
-  source: Generation["source"] = { type: "builtin" },
+  source: NonNullable<Generation["source"]>,
 ) {
   const app = yield* App.Service
   const agents = yield* Agent.Service
@@ -107,24 +107,10 @@ export const make = Effect.fn("PluginHost.make")(function* (
       return { location: locationInfo(yield* Location.Service), data: yield* effect }
     }).pipe(Effect.provide(locations.get(ref)))
 
-  // A plugin that is not built in stamps its id on every tool it adds or updates, over whatever the plugin set, so
-  // `execute.before` hooks can tell its tools from built-in and MCP tools. Updating a built-in tool makes the plugin its
-  // owner: the conservative direction, since the plugin can change what that tool does.
-  const stamp = (options: Tool.Options | undefined): Tool.Options => ({
-    ...options,
-    experimental: { ...options?.experimental, plugin: pluginID },
-  })
-  const owned = (editor: Tool.Editor): Tool.Editor => ({
-    ...editor,
-    add: (tool) => editor.add({ ...tool, options: stamp(tool.options) }),
-    update: (id, update) =>
-      editor.update(id, (tool) => {
-        update(tool)
-        tool.options = stamp(tool.options)
-      }),
-  })
-  const transformTools: typeof tools.transform =
-    source.type === "builtin" ? tools.transform : (callback) => tools.transform((editor) => callback(owned(editor)))
+  // A plugin that is not built in records itself as the owner of the tools it adds or updates; the registry holds the
+  // owner outside the tools, so `execute.before` hooks can tell them from built-in and MCP tools. Updating a built-in
+  // tool makes the plugin its owner: the conservative direction, since the plugin can change what that tool does.
+  const transformTools: typeof tools.transform = source.type === "builtin" ? tools.transform : tools.installed(pluginID)
 
   const sessionPermission = (input: Parameters<Plugin.Context["permission"]["get"]>[0]) =>
     permission

@@ -27,13 +27,13 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test")
+  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
   yield* OpenAIPlugin.effect(host)
 })
 
 const addGithubCopilotPlugin = Effect.fn(function* () {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test")
+  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
   yield* GithubCopilotPlugin.effect(host)
 })
 

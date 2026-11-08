@@ -3,15 +3,17 @@ import { Agent } from "@opencode/core/agent"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginHost } from "@opencode/core/plugin/host"
+import { PluginPromise } from "@opencode/core/plugin/promise"
 import { Session } from "@opencode/core/session"
 import { SessionMessage } from "@opencode/core/session/message"
 import { Tool } from "@opencode/core/tool"
 import type { Info } from "@opencode/schema/tool"
-import { Effect, Schema, type Types } from "effect"
+import { Effect, Schema } from "effect"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "./fixture"
 
 const it = testEffect(PluginTestLayer)
+const builtin = { type: "builtin" } as const
 const installed = { type: "package", target: "acme" } as const
 
 // Tools are direct (not Code Mode) unless a test says otherwise, so they can be called by name.
@@ -19,7 +21,7 @@ const make = (name: string, options: Tool.Options = { codemode: false }): Info =
   name,
   description: name,
   input: Schema.Struct({ text: Schema.String }),
-  execute: ({ text }) => Effect.succeed({ content: text }),
+  execute: ({ text }) => Effect.succeed({ content: `${name}:${text}` }),
   options,
 })
 
@@ -30,8 +32,8 @@ const call = (name: string, input: unknown = { text: name }): Parameters<Tool.Sn
   call: { type: "tool-call", id: `call-${name}`, name, input },
 })
 
-/** Runs the direct call and returns what `execute.before` reported for it. */
-const observe = (name: string) =>
+/** Records what each `execute.before` hook sees, then runs the call. */
+const observe = (name: string, input?: unknown) =>
   Effect.gen(function* () {
     const hooks = yield* PluginHooks.Service
     const tools = yield* Tool.Service
@@ -39,46 +41,54 @@ const observe = (name: string) =>
     yield* hooks.register("tool", "execute.before", (event) =>
       Effect.sync(() => void seen.push({ tool: event.tool, experimental: { ...event.experimental } })),
     )
-    yield* (yield* tools.snapshot()).execute(call(name))
-    return seen
+    const snapshot = yield* tools.snapshot()
+    const result = yield* snapshot.execute(call(name, input))
+    return { seen, result }
   })
 
 it.live("a tool an installed plugin adds reports that plugin's id", () =>
   Effect.gen(function* () {
-    const host = yield* PluginHost.make(yield* Plugin.Service, "acme", installed)
+    const plugins = yield* Plugin.Service
+    const host = yield* PluginHost.make(plugins, "acme", installed)
     yield* host.tool.transform((editor) => editor.add(make("deploy")))
-    expect(yield* observe("deploy")).toEqual([{ tool: "deploy", experimental: { plugin: "acme", selfChecks: false } }])
+    const observed = yield* observe("deploy")
+    expect(observed.seen).toEqual([{ tool: "deploy", experimental: { plugin: "acme", selfChecks: false } }])
   }),
 )
 
 it.live("built-in and MCP tools report no plugin", () =>
   Effect.gen(function* () {
-    const builtin = yield* PluginHost.make(yield* Plugin.Service, "core")
-    yield* builtin.tool.transform((editor) => editor.add(make("read")))
+    const plugins = yield* Plugin.Service
+    const tools = yield* Tool.Service
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    yield* core.tool.transform((editor) => editor.add(make("read")))
     // MCP tools register on the Tool service directly, without a plugin host.
-    yield* (yield* Tool.Service).transform((editor) => editor.add(make("server_search")))
+    yield* tools.transform((editor) => editor.add(make("server_search")))
     const read = yield* observe("read")
     const mcp = yield* observe("server_search")
-    expect(read[0]?.experimental).toEqual({ selfChecks: false })
-    expect(mcp[0]?.experimental).toEqual({ selfChecks: false })
+    expect(read.seen[0]?.experimental).toEqual({ selfChecks: false })
+    expect(mcp.seen[0]?.experimental).toEqual({ selfChecks: false })
   }),
 )
 
 it.live("selfChecks is true for a tool that sets options.experimental.permission.self", () =>
   Effect.gen(function* () {
-    const host = yield* PluginHost.make(yield* Plugin.Service, "acme", installed)
+    const plugins = yield* Plugin.Service
+    const host = yield* PluginHost.make(plugins, "acme", installed)
     yield* host.tool.transform((editor) =>
       editor.add(make("careful", { codemode: false, experimental: { permission: { self: true } } })),
     )
-    expect((yield* observe("careful"))[0]?.experimental).toEqual({ plugin: "acme", selfChecks: true })
+    const observed = yield* observe("careful")
+    expect(observed.seen[0]?.experimental).toEqual({ plugin: "acme", selfChecks: true })
   }),
 )
 
 it.live("a Code Mode inner call reports the same values as a direct call", () =>
   Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
     const hooks = yield* PluginHooks.Service
     const tools = yield* Tool.Service
-    const host = yield* PluginHost.make(yield* Plugin.Service, "acme", installed)
+    const host = yield* PluginHost.make(plugins, "acme", installed)
     const options = { experimental: { permission: { self: true } } } as const
     yield* host.tool.transform((editor) => {
       editor.add(make("direct", { codemode: false, ...options }))
@@ -98,48 +108,136 @@ it.live("a Code Mode inner call reports the same values as a direct call", () =>
   }),
 )
 
-it.live("an installed plugin cannot set or clear the owner when it adds a tool", () =>
+it.live("a plugin cannot forge or clear the owner through the tools it can reach", () =>
   Effect.gen(function* () {
-    const host = yield* PluginHost.make(yield* Plugin.Service, "acme", installed)
+    const plugins = yield* Plugin.Service
+    const host = yield* PluginHost.make(plugins, "acme", installed)
+    const kept: Array<{ options?: unknown }> = []
     yield* host.tool.transform((editor) => {
-      editor.add(make("spoofed", { codemode: false, experimental: { plugin: "other" } }))
-      editor.add(make("cleared", { codemode: false, experimental: { plugin: undefined } }))
+      editor.add(make("deploy"))
+      editor.update("deploy", (tool) => void kept.push(tool))
+      // Live objects from get and list, and a kept update reference, can be rewritten but carry no owner.
+      const forged = { codemode: false, experimental: { plugin: "other" } }
+      Reflect.set(editor.get("deploy") ?? {}, "options", forged)
+      Reflect.set(editor.list()[0] ?? {}, "options", forged)
     })
-    expect((yield* observe("spoofed"))[0]?.experimental).toMatchObject({ plugin: "acme" })
-    expect((yield* observe("cleared"))[0]?.experimental).toMatchObject({ plugin: "acme" })
+    Reflect.set(kept[0] ?? {}, "options", { codemode: false, experimental: { plugin: undefined } })
+    expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ plugin: "acme" })
   }),
 )
 
 it.live("an installed plugin that updates a built-in tool becomes its owner", () =>
   Effect.gen(function* () {
-    const builtin = yield* PluginHost.make(yield* Plugin.Service, "core")
-    yield* builtin.tool.transform((editor) => editor.add(make("read")))
-    const host = yield* PluginHost.make(yield* Plugin.Service, "acme", installed)
-    yield* host.tool.transform((editor) =>
-      editor.update("read", (tool) => {
-        tool.options = { ...tool.options, experimental: { plugin: "other" } }
-      }),
-    )
-    expect((yield* observe("read"))[0]?.experimental).toMatchObject({ plugin: "acme" })
+    const plugins = yield* Plugin.Service
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    yield* core.tool.transform((editor) => editor.add(make("read")))
+    const host = yield* PluginHost.make(plugins, "acme", installed)
+    yield* host.tool.transform((editor) => editor.update("read", (tool) => void (tool.description = "wrapped")))
+    const observed = yield* observe("read")
+    expect(observed.seen[0]?.experimental).toMatchObject({ plugin: "acme" })
   }),
 )
 
-it.live("a hook cannot change the owner that later hooks see", () =>
+it.live("the owner follows the latest add, a removal clears it, and a built-in add replaces it", () =>
   Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const acme = yield* PluginHost.make(plugins, "acme", installed)
+    const beta = yield* PluginHost.make(plugins, "beta", { type: "local", path: "/beta" })
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    yield* acme.tool.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ plugin: "acme" })
+
+    yield* beta.tool.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ plugin: "beta" })
+
+    // A built-in update leaves the owner; a built-in add clears it.
+    yield* core.tool.transform((editor) => editor.update("deploy", (tool) => void (tool.description = "again")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ plugin: "beta" })
+    yield* core.tool.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({ selfChecks: false })
+
+    // Removed, then added again by another plugin, the tool does not keep the earlier owner.
+    yield* acme.tool.transform((editor) => editor.remove("deploy"))
+    yield* beta.tool.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ plugin: "beta" })
+  }),
+)
+
+it.live("a hook cannot change the owner that later hooks see, and core still runs the tool", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
     const hooks = yield* PluginHooks.Service
-    const host = yield* PluginHost.make(yield* Plugin.Service, "acme", installed)
+    const tools = yield* Tool.Service
+    const host = yield* PluginHost.make(plugins, "acme", installed)
     yield* host.tool.transform((editor) => editor.add(make("deploy")))
+    const attempts: boolean[] = []
     const later: unknown[] = []
     yield* hooks.register("tool", "execute.before", (event) =>
       Effect.sync(() => {
-        Reflect.set(event.experimental as Types.Mutable<object>, "plugin", "evil")
-        Reflect.set(event, "experimental", { plugin: undefined })
+        attempts.push(
+          Reflect.set(event.experimental ?? {}, "plugin", "evil"),
+          Reflect.set(event, "experimental", { plugin: undefined }),
+          Reflect.defineProperty(event, "experimental", { value: { plugin: undefined } }),
+          Reflect.deleteProperty(event, "experimental"),
+        )
       }),
     )
     yield* hooks.register("tool", "execute.before", (event) =>
       Effect.sync(() => void later.push({ ...event.experimental })),
     )
-    yield* (yield* (yield* Tool.Service).snapshot()).execute(call("deploy"))
+    const snapshot = yield* tools.snapshot()
+    const result = yield* snapshot.execute(call("deploy"))
+    expect(attempts).toEqual([false, false, false, false])
     expect(later).toEqual([{ plugin: "acme", selfChecks: false }])
+    expect(result.content).toEqual([{ type: "text", text: "deploy:deploy" }])
+  }),
+)
+
+it.live("a hook that renames the call is reported, and runs, as the tool it renamed to", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const hooks = yield* PluginHooks.Service
+    const tools = yield* Tool.Service
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    const host = yield* PluginHost.make(plugins, "acme", installed)
+    yield* core.tool.transform((editor) => editor.add(make("read")))
+    yield* host.tool.transform((editor) => editor.add(make("deploy")))
+    const later: unknown[] = []
+    yield* hooks.register("tool", "execute.before", (event) => Effect.sync(() => void (event.tool = "read")))
+    yield* hooks.register("tool", "execute.before", (event) =>
+      Effect.sync(() => void later.push({ ...event.experimental })),
+    )
+    const snapshot = yield* tools.snapshot()
+    const result = yield* snapshot.execute(call("deploy"))
+    expect(later).toEqual([{ selfChecks: false }])
+    expect(result.content).toEqual([{ type: "text", text: "read:deploy" }])
+  }),
+)
+
+it.live("a Promise plugin's tools report the plugin's id", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const host = yield* PluginHost.make(plugins, "promise-acme", installed)
+    const seen: unknown[] = []
+    yield* PluginPromise.fromPromise({
+      id: "promise-acme",
+      async setup(context) {
+        await context.tool.transform((editor) =>
+          editor.add({
+            name: "deploy",
+            description: "deploy",
+            input: Schema.Struct({ text: Schema.String }),
+            execute: async ({ text }) => ({ content: text }),
+            options: { codemode: false },
+          }),
+        )
+        await context.tool.hook("execute.before", async (event) => {
+          seen.push({ ...event.experimental })
+        })
+      },
+    }).effect(host)
+    const observed = yield* observe("deploy")
+    expect(observed.seen[0]?.experimental).toEqual({ plugin: "promise-acme", selfChecks: false })
+    expect(seen).toEqual([{ plugin: "promise-acme", selfChecks: false }])
   }),
 )

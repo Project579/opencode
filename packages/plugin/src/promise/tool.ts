@@ -45,9 +45,15 @@ interface ToolHooks {
     input: unknown
     /**
      * Experimental: may change without compatibility guarantees. Read-only facts about the tool this call will run,
-     * set by OpenCode and the same for direct calls and Code Mode inner calls; a hook cannot change them.
-     * `plugin` is the id of the installed (non-built-in) plugin that added the tool, undefined for built-in and MCP
-     * tools. `selfChecks` is true when the tool sets `options.experimental.permission.self`.
+     * set by OpenCode and the same for direct calls and Code Mode inner calls. Assigning to or redefining the field
+     * throws, which fails that call.
+     *
+     * `plugin` is the id of the non-built-in plugin (package, local path or SDK) that last added or updated the tool,
+     * and is undefined for built-in and MCP tools. It is the plugin's self-declared id: duplicate ids are rejected and
+     * the first plugin in boot order wins, so a permission plugin should not trust a tool by this id alone.
+     *
+     * `selfChecks` is true when the tool sets `options.experimental.permission.self`. `{}`, with no `selfChecks` key,
+     * means the tool is unknown at the time of the call, unlike `{ selfChecks: false }` for a known tool.
      */
     readonly experimental?: { readonly plugin?: string; readonly selfChecks?: boolean }
   }

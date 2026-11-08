@@ -710,7 +710,7 @@ it.effect("activates a saved credential through the context", () =>
 it.effect("host event subscriptions deliver requested rpc types and ignore unknown types", () =>
   Effect.gen(function* () {
     const bus = yield* Bus.Service
-    const host = yield* PluginHost.make(yield* Plugin.Service, "test")
+    const host = yield* PluginHost.make(yield* Plugin.Service, "test", { type: "builtin" })
     const fiber = yield* host.event
       // @ts-expect-error untyped JavaScript plugins can still pass unknown type names
       .subscribe({ types: ["rpc.test.ping", "test.unknown"] })

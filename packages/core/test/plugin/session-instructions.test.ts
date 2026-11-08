@@ -28,7 +28,7 @@ it.live("Effect plugins can put, list, and remove session instruction entries se
   Effect.gen(function* () {
     const plugins = yield* Plugin.Service
     const sessions = yield* Session.Service
-    const context = yield* PluginHost.make(plugins, "test")
+    const context = yield* PluginHost.make(plugins, "test", { type: "builtin" })
     const created = yield* context.session.create({ title: "Plugin instructions" })
 
     yield* context.session.instructions.entry.put({
@@ -42,7 +42,9 @@ it.live("Effect plugins can put, list, and remove session instruction entries se
     expect(yield* sessions.inbox(created.id)).toEqual([])
 
     const first = yield* prepareRequest(created.id)
-    expect(Instructions.join(first.initial)).toBe(['<context key="deploy-target">', "production", "</context>"].join("\n"))
+    expect(Instructions.join(first.initial)).toBe(
+      ['<context key="deploy-target">', "production", "</context>"].join("\n"),
+    )
     expect(first.entries).toEqual([])
 
     yield* context.session.instructions.entry.put({
@@ -121,7 +123,7 @@ it.live("Promise plugins can put, list, and remove session instruction entries s
   Effect.gen(function* () {
     const plugins = yield* Plugin.Service
     const sessions = yield* Session.Service
-    const context = yield* PluginHost.make(plugins, "test")
+    const context = yield* PluginHost.make(plugins, "test", { type: "builtin" })
     const created = yield* context.session.create({ title: "Promise plugin instructions" })
 
     yield* PluginPromise.fromPromise({

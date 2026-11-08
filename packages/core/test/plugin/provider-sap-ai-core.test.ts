@@ -23,7 +23,7 @@ const npm = Npm.Service.of({
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test")
+  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
   yield* SapAICorePlugin.effect(host).pipe(Effect.provideService(Npm.Service, npm))
 })
 

@@ -111,7 +111,7 @@ it.effect("sets known OpenAI Responses defaults without overriding configured or
         })
       }
     })
-    yield* VerbosityPlugin.Plugin.effect(yield* PluginHost.make(plugins, "test"))
+    yield* VerbosityPlugin.Plugin.effect(yield* PluginHost.make(plugins, "test", { type: "builtin" }))
 
     for (const kind of ["context", "compaction", "generate", "title"] as const) {
       const event = request(ref("openai", "gpt-5.5"))

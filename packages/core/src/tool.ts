@@ -34,15 +34,25 @@ export interface Editor {
   readonly remove: (id: string) => void
 }
 
+// What the state builds per rebuild; `as` makes the plugin-facing editor for one owner and is never handed to plugins.
+type Owned = { readonly as: (owner?: string) => Editor }
+
 type Data = {
   tools: Map<string, Tool.Info & { readonly id: string }>
   // Converted once at registration; schemas cannot change without re-registering the tool.
   definitions: Map<string, ToolDefinition>
   namespaces: Map<string, Tool.Namespace>
+  // Written only through `Interface.installed`, never through the plugin-facing editor or the stored tools.
+  owners: Map<string, string>
   errors: { kind: "tool" | "namespace"; name: string; namespace?: string; error: RegistrationError }[]
 }
 
 export interface Interface extends State.Transformable<Editor> {
+  /**
+   * Like `transform`, but every tool the callback adds or updates records `owner` as the installed plugin that provided
+   * it, and an add replaces any earlier owner. Only the plugin host calls this; plugins have no other way to write it.
+   */
+  readonly installed: (owner: string) => State.Transform<Editor>
   readonly list: () => Effect.Effect<ReadonlyArray<Tool.Info & { readonly id: string }>>
   readonly snapshot: (permissions?: Permission.Ruleset) => Effect.Effect<Snapshot>
   /**
@@ -120,26 +130,31 @@ const layer = Layer.effect(
       ]
     })
 
-    // `tool` finds the tool the call will run. `experimental` is a getter over the event's current `tool`, so a hook
-    // that renames the call is told about the tool that actually runs. It has no setter and returns a fresh frozen
-    // object, so a hook cannot change what later hooks or core see.
+    // `target` finds the id of the tool the call will run. `experimental` reads the event's current `tool`, so a hook that
+    // renames the call is told about the tool that actually runs. It is a non-configurable getter without a setter that
+    // returns a fresh frozen object, so a hook cannot change what later hooks see, and core never reads it back.
     const beforeExecute = (
+      data: Data,
       name: string,
       input: unknown,
       context: Tool.Context,
-      tool: (name: string) => Tool.Info | undefined,
-    ) =>
-      hooks.trigger("tool", "execute.before", {
+      target: (name: string) => string | undefined,
+    ) => {
+      const event: PluginHooks.Domains["tool"]["execute.before"] = {
         tool: name,
         sessionID: context.sessionID,
         agent: context.agent,
         messageID: context.messageID,
         id: context.id,
         input,
-        get experimental() {
-          return experimental(tool(this.tool))
-        },
+      }
+      Object.defineProperty(event, "experimental", {
+        get: () => experimental(data, target(event.tool)),
+        enumerable: true,
+        configurable: false,
       })
+      return hooks.trigger("tool", "execute.before", event)
+    }
 
     const executeTool = Effect.fn("Tool.execute")(function* (
       tool: Tool.Info,
@@ -191,8 +206,8 @@ const layer = Layer.effect(
       }
     })
 
-    const run = (tool: Tool.Info, name: string, input: unknown, context: Tool.Context) =>
-      beforeExecute(name, input, context, () => tool).pipe(
+    const run = (data: Data, tool: Tool.Info, name: string, input: unknown, context: Tool.Context) =>
+      beforeExecute(data, name, input, context, () => name).pipe(
         Effect.flatMap((event) => executeTool(tool, name, event.input, context)),
       )
 
@@ -205,45 +220,55 @@ const layer = Layer.effect(
           definition: ToolDefinition
         }
       | undefined
-    const state = State.create<Data, Editor>({
+    const state = State.create<Data, Owned>({
       name: "tool",
       initial: () => ({
         tools: new Map(),
         definitions: new Map(),
         namespaces: new Map(),
+        owners: new Map(),
         errors: [],
       }),
-      editor: (editor) => ({
-        list: () => Array.from(editor.tools.values()),
-        get: (id) => editor.tools.get(id),
-        namespace: (namespace) => {
-          const error = namespaceError(namespace.name)
-          if (error) {
-            editor.errors.push({ kind: "namespace", name: namespace.name, namespace: namespace.name, error })
-            return
-          }
-          editor.namespaces.set(namespace.name, { ...namespace })
-        },
-        add: (tool) => {
-          const id = effectiveName(tool)
-          commit(editor, id, { ...tool, id, options: tool.options && { ...tool.options } })
-        },
-        update: (id, update) => {
-          const current = editor.tools.get(id)
-          if (!current) return
-          const tool = { ...current, options: current.options && { ...current.options } }
-          update(tool)
-          tool.name = current.name
-          tool.id = id
-          if (tool.options?.namespace !== current.options?.namespace)
-            tool.options = { ...tool.options, namespace: current.options?.namespace }
-          commit(editor, id, tool)
-        },
-        remove: (id) => {
-          editor.tools.delete(id)
-          editor.definitions.delete(id)
-        },
-      }),
+      editor: (editor) => {
+        // The owner is fixed when the editor is made, so an editor a plugin keeps still records the same owner. A change
+        // by a built-in source (no owner) leaves an existing owner alone; adding over a tool clears it.
+        const as = (owner?: string): Editor => ({
+          list: () => Array.from(editor.tools.values()),
+          get: (id) => editor.tools.get(id),
+          namespace: (namespace) => {
+            const error = namespaceError(namespace.name)
+            if (error) {
+              editor.errors.push({ kind: "namespace", name: namespace.name, namespace: namespace.name, error })
+              return
+            }
+            editor.namespaces.set(namespace.name, { ...namespace })
+          },
+          add: (tool) => {
+            const id = effectiveName(tool)
+            if (!commit(editor, id, { ...tool, id, options: tool.options && { ...tool.options } })) return
+            if (owner === undefined) editor.owners.delete(id)
+            else editor.owners.set(id, owner)
+          },
+          update: (id, update) => {
+            const current = editor.tools.get(id)
+            if (!current) return
+            const tool = { ...current, options: current.options && { ...current.options } }
+            update(tool)
+            tool.name = current.name
+            tool.id = id
+            if (tool.options?.namespace !== current.options?.namespace)
+              tool.options = { ...tool.options, namespace: current.options?.namespace }
+            if (!commit(editor, id, tool) || owner === undefined) return
+            editor.owners.set(id, owner)
+          },
+          remove: (id) => {
+            editor.tools.delete(id)
+            editor.definitions.delete(id)
+            editor.owners.delete(id)
+          },
+        })
+        return { as }
+      },
       notify: (value) => {
         catalog = undefined
         return Effect.forEach(
@@ -260,7 +285,8 @@ const layer = Layer.effect(
     })
 
     return Service.of({
-      transform: state.transform,
+      transform: (callback) => state.transform((editor) => callback(editor.as())),
+      installed: (owner) => (callback) => state.transform((editor) => callback(editor.as(owner))),
       reload: state.reload,
       list: () => Effect.sync(() => Array.from(state.get().tools.values())),
       snapshot: Effect.fn("Tool.snapshot")((permissions) =>
@@ -287,7 +313,7 @@ const layer = Layer.effect(
           const codeModeTool = codeModeEnabled
             ? CodeModeTool.create(
                 codeModeInventory,
-                (name, tool, input, context) => run(tool, name, input, context),
+                (name, tool, input, context) => run(data, tool, name, input, context),
                 permission,
                 flag,
               )
@@ -320,9 +346,10 @@ const layer = Layer.effect(
                 id: Tool.CallID.make(input.call.id),
                 progress: input.progress ?? (() => Effect.void),
               }
-              const event = yield* beforeExecute(input.call.name, input.call.input, context, (called) =>
-                direct.get(input.definitions?.get(called)?.name ?? called),
-              )
+              const event = yield* beforeExecute(data, input.call.name, input.call.input, context, (called) => {
+                const id = input.definitions?.get(called)?.name ?? called
+                return direct.has(id) ? id : undefined
+              })
               const requested = input.definitions?.get(event.tool)
               // Preserve session context removal and alias resolution, now after the repair hook.
               if (!requested && input.definitions && (direct.has(event.tool) || codeModeTool?.name === event.tool))
@@ -370,7 +397,7 @@ const layer = Layer.effect(
                 ...input.context,
                 id: Tool.CallID.make(`call_${input.context.messageID}_${index}`),
               }
-              return yield* run(tool, name, toolInput, context)
+              return yield* run(data, tool, name, toolInput, context)
             }),
           flag,
         )
@@ -380,14 +407,17 @@ const layer = Layer.effect(
 )
 
 /** Store a valid tool under its effective name, or record why it was skipped. */
-function experimental(tool: Tool.Info | undefined) {
-  if (tool === undefined) return Object.freeze({})
+function experimental(data: Data, id: string | undefined) {
+  const tool = id === undefined ? undefined : data.tools.get(id)
+  if (id === undefined || tool === undefined) return Object.freeze({})
+  const plugin = data.owners.get(id)
   return Object.freeze({
-    ...(tool.options?.experimental?.plugin === undefined ? {} : { plugin: tool.options.experimental.plugin }),
+    ...(plugin === undefined ? {} : { plugin }),
     selfChecks: tool.options?.experimental?.permission?.self === true,
   })
 }
 
+/** Store a valid tool under its effective name, or record why it was skipped. */
 function commit(editor: Data, id: string, input: Tool.Info & { readonly id: string }) {
   // JavaScript plugins may leave out `input` for a tool that takes none.
   const tool = input.input === undefined || input.input === null ? { ...input, input: {} } : input
@@ -399,10 +429,11 @@ function commit(editor: Data, id: string, input: Tool.Info & { readonly id: stri
       namespace: tool.options?.namespace,
       error: registered.failure,
     })
-    return
+    return false
   }
   editor.tools.set(id, tool)
   editor.definitions.set(id, registered.success)
+  return true
 }
 
 const whollyDisabled = (action: string, rules: Permission.Ruleset) => {

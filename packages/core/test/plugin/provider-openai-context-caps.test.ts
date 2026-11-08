@@ -32,7 +32,7 @@ const setup = Effect.fn(function* (value: Credential.Value) {
   const credentials = yield* Credential.Service
   yield* credentials.create({ integrationID: Integration.ID.make("openai"), value })
   const plugin = yield* Plugin.Service
-  yield* OpenAIContextCapsPlugin.effect(yield* PluginHost.make(plugin, "test"))
+  yield* OpenAIContextCapsPlugin.effect(yield* PluginHost.make(plugin, "test", { type: "builtin" }))
 })
 
 const limit = Effect.fn(function* (id: string) {
