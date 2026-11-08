@@ -37,7 +37,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
 import { Generate } from "../generate.js"
 import { Permission } from "../permission.js"
 import { PluginHooks } from "./hooks.js"
-import type { Interface } from "../plugin.js"
+import type { Generation, Interface } from "../plugin.js"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 
 const mutable = <T>(value: T) => value as DeepMutable<T>
@@ -50,7 +50,11 @@ const isRpcType = (type: string): type is RpcEvent["type"] => type.startsWith("r
 const isRpcEvent = (event: Event.Payload): event is RpcEvent => isRpcType(event.type)
 const isPublicEvent = (event: Event.Payload): event is EventManifest.ServerEvent | RpcEvent =>
   EventManifest.isServer(event) || isRpcEvent(event)
-export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interface, "list">, pluginID: string) {
+export const make = Effect.fn("PluginHost.make")(function* (
+  plugin: Pick<Interface, "list">,
+  pluginID: string,
+  source: Generation["source"] = { type: "builtin" },
+) {
   const app = yield* App.Service
   const agents = yield* Agent.Service
   const artifacts = yield* Artifact.Service
@@ -102,6 +106,25 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
     Effect.gen(function* () {
       return { location: locationInfo(yield* Location.Service), data: yield* effect }
     }).pipe(Effect.provide(locations.get(ref)))
+
+  // A plugin that is not built in stamps its id on every tool it adds or updates, over whatever the plugin set, so
+  // `execute.before` hooks can tell its tools from built-in and MCP tools. Updating a built-in tool makes the plugin its
+  // owner: the conservative direction, since the plugin can change what that tool does.
+  const stamp = (options: Tool.Options | undefined): Tool.Options => ({
+    ...options,
+    experimental: { ...options?.experimental, plugin: pluginID },
+  })
+  const owned = (editor: Tool.Editor): Tool.Editor => ({
+    ...editor,
+    add: (tool) => editor.add({ ...tool, options: stamp(tool.options) }),
+    update: (id, update) =>
+      editor.update(id, (tool) => {
+        update(tool)
+        tool.options = stamp(tool.options)
+      }),
+  })
+  const transformTools: typeof tools.transform =
+    source.type === "builtin" ? tools.transform : (callback) => tools.transform((editor) => callback(owned(editor)))
 
   const sessionPermission = (input: Parameters<Plugin.Context["permission"]["get"]>[0]) =>
     permission
@@ -500,7 +523,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
       hook: (name, callback) => hooks.register("shell", name, callback),
     },
     tool: {
-      transform: tools.transform,
+      transform: transformTools,
       reload: tools.reload,
       list: tools.list,
       hook: (name, callback) => hooks.register("tool", name, callback),

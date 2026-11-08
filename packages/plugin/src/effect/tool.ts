@@ -25,6 +25,13 @@ export interface ToolHooks {
     readonly messageID: SessionMessage.ID
     readonly id: Tool.CallID
     input: unknown
+    /**
+     * Experimental: may change without compatibility guarantees. Read-only facts about the tool this call will run,
+     * set by OpenCode and the same for direct calls and Code Mode inner calls; a hook cannot change them.
+     * `plugin` is the id of the installed (non-built-in) plugin that added the tool, undefined for built-in and MCP
+     * tools. `selfChecks` is true when the tool sets `options.experimental.permission.self`.
+     */
+    readonly experimental?: { readonly plugin?: string; readonly selfChecks?: boolean }
   }
   readonly "execute.after": {
     readonly tool: string

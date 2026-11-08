@@ -120,7 +120,15 @@ const layer = Layer.effect(
       ]
     })
 
-    const beforeExecute = (name: string, input: unknown, context: Tool.Context) =>
+    // `tool` finds the tool the call will run. `experimental` is a getter over the event's current `tool`, so a hook
+    // that renames the call is told about the tool that actually runs. It has no setter and returns a fresh frozen
+    // object, so a hook cannot change what later hooks or core see.
+    const beforeExecute = (
+      name: string,
+      input: unknown,
+      context: Tool.Context,
+      tool: (name: string) => Tool.Info | undefined,
+    ) =>
       hooks.trigger("tool", "execute.before", {
         tool: name,
         sessionID: context.sessionID,
@@ -128,6 +136,9 @@ const layer = Layer.effect(
         messageID: context.messageID,
         id: context.id,
         input,
+        get experimental() {
+          return experimental(tool(this.tool))
+        },
       })
 
     const executeTool = Effect.fn("Tool.execute")(function* (
@@ -181,7 +192,9 @@ const layer = Layer.effect(
     })
 
     const run = (tool: Tool.Info, name: string, input: unknown, context: Tool.Context) =>
-      beforeExecute(name, input, context).pipe(Effect.flatMap((event) => executeTool(tool, name, event.input, context)))
+      beforeExecute(name, input, context, () => tool).pipe(
+        Effect.flatMap((event) => executeTool(tool, name, event.input, context)),
+      )
 
     let catalog:
       | {
@@ -307,7 +320,9 @@ const layer = Layer.effect(
                 id: Tool.CallID.make(input.call.id),
                 progress: input.progress ?? (() => Effect.void),
               }
-              const event = yield* beforeExecute(input.call.name, input.call.input, context)
+              const event = yield* beforeExecute(input.call.name, input.call.input, context, (called) =>
+                direct.get(input.definitions?.get(called)?.name ?? called),
+              )
               const requested = input.definitions?.get(event.tool)
               // Preserve session context removal and alias resolution, now after the repair hook.
               if (!requested && input.definitions && (direct.has(event.tool) || codeModeTool?.name === event.tool))
@@ -365,6 +380,14 @@ const layer = Layer.effect(
 )
 
 /** Store a valid tool under its effective name, or record why it was skipped. */
+function experimental(tool: Tool.Info | undefined) {
+  if (tool === undefined) return Object.freeze({})
+  return Object.freeze({
+    ...(tool.options?.experimental?.plugin === undefined ? {} : { plugin: tool.options.experimental.plugin }),
+    selfChecks: tool.options?.experimental?.permission?.self === true,
+  })
+}
+
 function commit(editor: Data, id: string, input: Tool.Info & { readonly id: string }) {
   // JavaScript plugins may leave out `input` for a tool that takes none.
   const tool = input.input === undefined || input.input === null ? { ...input, input: {} } : input
