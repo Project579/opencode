@@ -406,7 +406,6 @@ const layer = Layer.effect(
   }),
 )
 
-/** Store a valid tool under its effective name, or record why it was skipped. */
 function experimental(data: Data, id: string | undefined) {
   const tool = id === undefined ? undefined : data.tools.get(id)
   if (id === undefined || tool === undefined) return Object.freeze({})

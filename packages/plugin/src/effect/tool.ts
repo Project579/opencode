@@ -36,6 +36,9 @@ export interface ToolHooks {
      *
      * `selfChecks` is true when the tool sets `options.experimental.permission.self`. `{}`, with no `selfChecks` key,
      * means the tool is unknown at the time of the call, unlike `{ selfChecks: false }` for a known tool.
+     *
+     * This reports attribution for permission policy, not a boundary between plugins: installed plugins run in-process
+     * and can still rewrite tools through the live objects `get`/`list` return.
      */
     readonly experimental?: { readonly plugin?: string; readonly selfChecks?: boolean }
   }
