@@ -1596,11 +1596,71 @@ describe("shell rules through wrapper commands", () => {
       }),
     )
 
-    it.live("spacing after a PowerShell stop-parsing token or inside curly quotes is kept", () =>
+    it.live("spacing after a PowerShell stop-parsing token or with curly quotes is kept", () =>
       Effect.gen(function* () {
         expect(ShellSpacing.collapse("icacls x  --%  /grant  a")).toBe("icacls x  --%  /grant  a")
-        expect(ShellSpacing.collapse("echo “a  b”  ‘c  d’  e")).toBe("echo “a  b” ‘c  d’ e")
+        expect(ShellSpacing.collapse("echo “a  b”  ‘c  d’  e")).toBe("echo “a  b”  ‘c  d’  e")
         expect(ShellSpacing.collapse("echo  a")).toBe("echo a")
+      }),
+    )
+    for (const command of [
+      "strace --decode-pids comm rm -rf x",
+      "env --a1 --a2 --a3 --a4 --a5 --a6 --a7 --a8 --a9 --a10 --a11 --a12 --a13 --a14 --a15 --a16 --a17 --a18 --a19 --a20 --a21 --a22 --a23 --a24 --a25 --a26 --a27 --a28 --a29 --a30 --a31 --a32 --a33 --a34 --a35 --a36 --a37 --a38 --a39 --a40 rm -rf x",
+      "env -S'rm -rf x'",
+    ])
+      it.live(`a deny still holds through ${command.slice(0, 60)}`, () =>
+        Effect.gen(function* () {
+          yield* setup([
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "shell", resource: "rm -rf *", effect: "deny" },
+          ])
+          expect((yield* ask(command)).effect).toBe("deny")
+        }),
+      )
+
+    for (const command of [
+      `env -S'r"m" -rf x'`,
+      `env -S'rm "-rf" x'`,
+      "env -S'rm\\_-rf\\_x'",
+      "echo x | xargs --r sh -c '{}'",
+      "echo x | xargs --r=% sh -c '%'",
+      "echo x | xargs -I X -i sh -c '{}'",
+      "echo x | xargs -I X -I Y sh -c Y",
+      "bash /dev/std[i]n",
+      "bash /dev/stdi?",
+      "bash /proc/self/task/*/fd/0",
+      "bash /proc/1/task/1/fd/0",
+      "sh ~/../../dev/stdin",
+      "/bin/r[]m] -rf x",
+      "timeout 5 /bin/r[]m] -rf x",
+    ])
+      it.live(`cannot read, so a deny rule makes it ask: ${command}`, () =>
+        Effect.gen(function* () {
+          yield* setup([
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "shell", resource: "rm -rf *", effect: "deny" },
+          ])
+          const service = yield* Permission.Service
+          expect((yield* request(command)).opaque, command).toBe(true)
+          const result = yield* ask(command)
+          expect(result.effect, command).not.toBe("allow")
+          if (result.effect === "ask") yield* service.reply({ requestID: result.id, reply: "once" })
+        }),
+      )
+
+    it.live("zsh path expansion and glob qualifiers in a command name cannot be read", () =>
+      Effect.gen(function* () {
+        for (const command of ["=rm -rf x", "/bin/rm(N) -rf x", "timeout 5 =rm -rf x"])
+          expect((yield* ShellParse.scan(command, "zsh", "/project")).opaque, command).toBe(true)
+        expect((yield* ShellParse.scan("[ -f x ] && [[ -d y ]]", "bash", "/project")).opaque).toBeUndefined()
+        expect((yield* ShellParse.scan("[ -f x ] && [[ -d y ]]", "zsh", "/project")).opaque).toBeUndefined()
+      }),
+    )
+
+    it.live("keeps the exact spacing of any text with curly quotes", () =>
+      Effect.gen(function* () {
+        expect(ShellSpacing.collapse("echo ‘x'a  b'")).toBe("echo ‘x'a  b'")
+        expect(ShellSpacing.collapse("echo “a  b”  c")).toBe("echo “a  b”  c")
       }),
     )
   })

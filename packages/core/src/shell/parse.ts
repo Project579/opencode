@@ -232,12 +232,13 @@ const WRAPPERS: Record<
       ...["--attach", "--columns", "--env", "--output", "--string-limit", "--summary-sort-by"],
       ...["--trace-path", "--user", "--trace", "--signal", "--status", "--abbrev", "--verbose", "--raw"],
       ...["--read", "--write", "--fault", "--inject", "--trace-fds", "--detach-on", "--const-print-style"],
+      ...["--decode-pids"],
       ...["--interruptible", "--summary-columns", "--summary-syscall-overhead", "--syscall-limit", "--kvm"],
     ],
     flags: [
       ...["--follow-forks", "--output-separately", "--summary-only", "--summary", "--summary-wall-clock"],
       ...["--no-abbrev", "--instruction-pointer", "--stack-trace", "--timestamps", "--relative-timestamps"],
-      ...["--syscall-times", "--seccomp-bpf", "--quiet", "--decode-fds", "--decode-pids", "--daemonize"],
+      ...["--syscall-times", "--seccomp-bpf", "--quiet", "--decode-fds", "--daemonize"],
     ],
   },
   sudo: {
@@ -268,7 +269,7 @@ const WRAPPERS: Record<
     values: ["-n", "-q", "--interval", "--equexit"],
     flags: [
       ...["--beep", "--color", "--no-color", "--differences", "--errexit", "--chgexit", "--exec", "--no-title"],
-      ...["--no-wrap", "--no-linewrap", "--precise"],
+      ...["--no-wrap", "--precise"],
     ],
     joins: true,
   },
@@ -288,7 +289,7 @@ const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"])
 const MAX_WRAPPER_DEPTH = 8
 const RUNNERS = new Set([...Object.keys(WRAPPERS), ...SHELLS, "eval", "find", "su"])
 const FIND_WRITES = new Set(["-delete", "-fls", "-fprint", "-fprint0", "-fprintf"])
-const STDIN_FILE = /^\/(?:dev\/stdin|dev\/fd\/\d+|proc\/(?:self|thread-self|\d+)\/fd\/\d+)$/
+const STDIN_FILE = /^\/(?:dev\/stdin|dev\/fd\/\d+|proc\/(?:self|thread-self|\d+)(?:\/task\/\d+)?\/fd\/\d+)$/
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/
 
 export function scan(command: string, shell: string, cwd: string): Effect.Effect<Result, Error> {
@@ -389,7 +390,7 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
       // A command name the shell expands or globs at run time cannot be matched by rules.
       if (
         wrapped?.opaque ||
-        (!powershell && (!isStaticBashWord(item.rawWords[0] ?? "") || hasGlob(item.rawWords[0] ?? "")))
+        (!powershell && (!isStaticBashWord(item.rawWords[0] ?? "") || globbedName(item.rawWords[0] ?? "", dialect)))
       ) {
         output.opaque = true
         output.unsavable = true
@@ -782,7 +783,7 @@ const OPAQUE: Wrapped = { guards: [], opaque: true }
  */
 type Supply = { replace?: string; appended?: true }
 /** Where a wrapped command starts, the words `env -S` splits into a new env command line, or no command. */
-type Start = number | { split: string[]; index: number } | undefined
+type Start = number | { split: string[]; index: number; quoted: boolean } | undefined
 
 /**
  * What a wrapper such as `env`, `xargs`, `find -exec` or `bash -c` runs: a guard for each command, so rules for it
@@ -815,7 +816,8 @@ function unwrap(
         : { guards: [] }
     // `env -S` splits its text into a new env command line, options included.
     if (typeof start === "object") {
-      if (!raw.slice(start.index).every(isStaticBashWord)) return OPAQUE
+      // Quotes and escapes inside the text follow env's own tokenizer, which is not modelled.
+      if (start.quoted || !raw.slice(start.index).every(isStaticBashWord)) return OPAQUE
       return unwrap(["env", ...start.split], ["env", ...start.split], dialect, depth + 1, supply) ?? { guards: [] }
     }
     if (spec.script?.includes(words[start]))
@@ -854,7 +856,7 @@ function command(words: string[], raw: string[], dialect: ShellScan.Dialect, dep
   // A command name the shell expands or globs at run time, or that xargs or find fill in from input, cannot be matched.
   if (
     !isStaticBashWord(raw[0] ?? "") ||
-    hasGlob(raw[0] ?? "") ||
+    globbedName(raw[0] ?? "", dialect) ||
     (supply?.replace !== undefined && (words[0] ?? "").includes(supply.replace))
   )
     return { guards: [exact], opaque: true }
@@ -901,9 +903,12 @@ function shell(words: string[], raw: string[], head: string, depth: number, supp
   const dialect = head === "zsh" || head === "bash" ? head : "posix"
   if (operand.kind === "inline")
     return file === undefined ? OPAQUE : script(file, isStaticBashWord(raw[operand.index]), dialect, depth, supply)
-  // A file the shell expands, a process substitution, a path to stdin or input xargs or find supply is unreadable.
+  // A file the shell expands or globs, a process substitution, a path to stdin or input xargs or find supply is
+  // unreadable.
   if (
     !isStaticBashWord(raw[operand.index]) ||
+    globbed(raw[operand.index]) ||
+    raw[operand.index].startsWith("~") ||
     /^[<>=]\(/.test(file) ||
     STDIN_FILE.test(path.posix.normalize(file)) ||
     (supply?.replace !== undefined && file.includes(supply.replace))
@@ -969,7 +974,7 @@ function xargsSupply(options: string[]): Supply {
     if (word.startsWith("--")) {
       const equals = word.indexOf("=")
       const name = equals < 0 ? word : word.slice(0, equals)
-      return name.length >= 4 && "--replace".startsWith(name) ? [equals < 0 ? "{}" : word.slice(equals + 1)] : []
+      return name.length >= 3 && "--replace".startsWith(name) ? [equals < 0 ? "{}" : word.slice(equals + 1)] : []
     }
     if (!word.startsWith("-")) return []
     // In a cluster such as `-0I{}`, the first option that takes a value takes the rest of the word or the next word.
@@ -980,8 +985,9 @@ function xargsSupply(options: string[]): Supply {
     if (letter === "I" || letter === "J") return [rest || (options[index + 1] ?? "")]
     if (letter === "i") return [rest || "{}"]
     return []
-  })[0]
-  return replace === undefined ? { appended: true } : { replace }
+  })
+  // As in GNU xargs, the last replace option wins.
+  return replace.length === 0 ? { appended: true } : { replace: replace.at(-1) }
 }
 
 /** The command named by the basename of a path such as /usr/bin/rm, which rules name it by. */
@@ -991,9 +997,24 @@ function basenamed(words: string[], raw: string[]) {
   return name.includes("/") && base && base !== name ? [[base, ...raw.slice(1)].join(" ")] : []
 }
 
-/** Whether an unquoted part of a word holds a glob, such as `r?` or `r[m]`, which picks a name at run time. */
-function hasGlob(raw: string) {
-  return /[*?]|\[[^\]]+\]/.test(raw.replace(/'[^']*'|"[^"]*"|\\./g, ""))
+/** Whether a word holds an unquoted `*`, `?` or `[`, which the shell may expand into other names. */
+function globbed(raw: string) {
+  return /[[*?]/.test(unquoted(raw))
+}
+
+/**
+ * Whether a command name picks its program at run time: an unquoted glob other than the `[` and `[[` commands, or in
+ * zsh a leading `=` path expansion or a trailing glob qualifier.
+ */
+function globbedName(raw: string, dialect: ShellScan.Dialect) {
+  if (raw === "[" || raw === "[[") return false
+  const text = unquoted(raw)
+  return globbed(raw) || (dialect === "zsh" && (text.startsWith("=") || text.endsWith(")")))
+}
+
+/** A raw word without its quoted and escaped parts. */
+function unquoted(raw: string) {
+  return raw.replace(/'[^']*'|"[^"]*"|\\./g, "")
 }
 
 /** Whether an option word, alone or in a cluster such as `-iu`, is the given option. */
@@ -1020,55 +1041,62 @@ function respace<Item extends { resource: string; commandOffset?: number }>(item
  * table does not name exactly: GNU accepts any unambiguous prefix, and a table can miss an option, so such an option
  * might or might not take the next word, and the command is guarded under both readings.
  */
-function commandStart(
-  words: string[],
-  head: string,
-  spec: (typeof WRAPPERS)[string],
-  from = 1,
-): { start: Start; alternatives: Start[] } {
-  let index = from
-  const alternatives: Start[] = []
-  while (index < words.length) {
-    const word = words[index]
-    if (word === "--") {
-      index++
-      break
-    }
-    if (word === "-" && head === "env") {
-      index++
-      continue
-    }
-    if (!word.startsWith("-") || word === "-") break
-    // `command -v` and `sudo -e` look up or edit their operands instead of running them.
-    if (head === "command" && /^-p*[vV]/.test(word)) return { start: undefined, alternatives }
-    if (head === "sudo" && (word === "-e" || word === "--edit")) return { start: undefined, alternatives }
-    if (head === "env") {
-      const split = splitString(words, index)
-      if (split !== undefined) return { start: { split, index }, alternatives }
-    }
-    if (word.startsWith("--")) {
-      if (word.includes("=") || spec.flags?.includes(word)) {
+function commandStart(words: string[], head: string, spec: (typeof WRAPPERS)[string]) {
+  // Each word index is read once, so many such options cost quadratic, not exponential, time.
+  const memo = new Map<number, { start: Start; alternatives: Start[] }>()
+  const from = (first: number): { start: Start; alternatives: Start[] } => {
+    const known = memo.get(first)
+    if (known) return known
+    const result = walk(first)
+    memo.set(first, result)
+    return result
+  }
+  const walk = (first: number): { start: Start; alternatives: Start[] } => {
+    let index = first
+    const alternatives: Start[] = []
+    while (index < words.length) {
+      const word = words[index]
+      if (word === "--") {
+        index++
+        break
+      }
+      if (word === "-" && head === "env") {
         index++
         continue
       }
-      if (spec.values?.includes(word)) {
-        index += 2
+      if (!word.startsWith("-") || word === "-") break
+      // `command -v` and `sudo -e` look up or edit their operands instead of running them.
+      if (head === "command" && /^-p*[vV]/.test(word)) return { start: undefined, alternatives }
+      if (head === "sudo" && (word === "-e" || word === "--edit")) return { start: undefined, alternatives }
+      if (head === "env") {
+        const split = splitString(words, index)
+        if (split !== undefined) return { start: { ...split, index }, alternatives }
+      }
+      if (word.startsWith("--")) {
+        if (word.includes("=") || spec.flags?.includes(word)) {
+          index++
+          continue
+        }
+        if (spec.values?.includes(word)) {
+          index += 2
+          continue
+        }
+        const valued =
+          word.length >= 3 && (spec.values ?? []).some((option) => option.startsWith("--") && option.startsWith(word))
+        const other = from(index + (valued ? 1 : 2))
+        alternatives.push(other.start, ...other.alternatives)
+        index += valued ? 2 : 1
         continue
       }
-      const valued =
-        word.length >= 4 && (spec.values ?? []).some((option) => option.startsWith("--") && option.startsWith(word))
-      const other = commandStart(words, head, spec, index + (valued ? 1 : 2))
-      alternatives.push(other.start, ...other.alternatives)
-      index += valued ? 2 : 1
-      continue
+      // In a cluster such as `-un`, a value option takes the next word only when it comes last.
+      const valued = [...word.slice(1)].findIndex((letter) => spec.values?.includes(`-${letter}`))
+      index += valued >= 0 && valued === word.length - 2 ? 2 : 1
     }
-    // In a cluster such as `-un`, a value option takes the next word only when it comes last.
-    const valued = [...word.slice(1)].findIndex((letter) => spec.values?.includes(`-${letter}`))
-    index += valued >= 0 && valued === word.length - 2 ? 2 : 1
+    if (spec.assignments) while (ASSIGNMENT.test(words[index] ?? "")) index++
+    index += spec.operands ?? 0
+    return { start: index < words.length ? index : undefined, alternatives: [...new Set(alternatives)] }
   }
-  if (spec.assignments) while (ASSIGNMENT.test(words[index] ?? "")) index++
-  index += spec.operands ?? 0
-  return { start: index < words.length ? index : undefined, alternatives }
+  return from(1)
 }
 
 /**
@@ -1081,7 +1109,7 @@ function splitString(words: string[], index: number) {
   const name = equals < 0 ? word : word.slice(0, equals)
   const value = (() => {
     if (name.startsWith("--"))
-      return name.length >= 4 && "--split-string".startsWith(name)
+      return name.length >= 3 && "--split-string".startsWith(name)
         ? equals < 0
           ? { text: words[index + 1] ?? "", next: index + 2 }
           : { text: word.slice(equals + 1), next: index + 1 }
@@ -1093,5 +1121,8 @@ function splitString(words: string[], index: number) {
     return attached ? { text: attached, next: index + 1 } : { text: words[index + 1] ?? "", next: index + 2 }
   })()
   if (!value) return
-  return [...value.text.split(/[ \t\n]+/).filter(Boolean), ...words.slice(value.next)]
+  return {
+    split: [...value.text.split(/[ \t\n]+/).filter(Boolean), ...words.slice(value.next)],
+    quoted: /['"\\]/.test(value.text),
+  }
 }
