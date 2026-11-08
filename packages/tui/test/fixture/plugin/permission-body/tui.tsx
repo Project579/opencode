@@ -6,7 +6,13 @@ export default Plugin.define({
   setup(context) {
     context.ui.slot({
       replace: "experimental.session.permission.body",
-      render: (input) => <text>{`Plugin body for ${input.sessionID} ${input.requestID}`}</text>,
+      render: (input) => (
+        <box>
+          <text>Plugin body for</text>
+          <text>{input.sessionID}</text>
+          <text>{input.requestID}</text>
+        </box>
+      ),
     })
   },
 })

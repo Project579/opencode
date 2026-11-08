@@ -201,7 +201,8 @@ export interface SlotMap {
    * request asks for (a command, patterns, an edit's diff, or what "Always allow" will save). A `replace` claim owns
    * that content only; the header, the body's container and its height limit, the options row and every key stay the
    * host's. Render `fallback()` to show the host's own body for the request, so a claim can decline reactively and
-   * take the body only while it needs it. Without a claim the host shows its body.
+   * take the body only while it needs it. Without a claim the host shows its body. The docked prompt clips a body
+   * taller than about 15 rows; the fullscreen key shows the rest and remounts the claim, so keep state outside render.
    */
   readonly "experimental.session.permission.body": {
     readonly sessionID: string

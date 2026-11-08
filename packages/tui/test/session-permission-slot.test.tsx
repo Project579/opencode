@@ -56,22 +56,28 @@ test("a replace claim swaps the options and their keys while the request stays v
   expect(setup.requests).toHaveLength(0)
 })
 
-test("a body claim replaces the request's body while the header and options stay", async () => {
-  await using plugin = await copyPlugin("permission-body")
-  await using state = await tmpdir()
-  await using setup = await createPermissionFixture(state.path, [plugin.directory])
-  await setup.waitForFrame((frame) => frame.includes(`Plugin body for ${setup.session.id} ${setup.permission.id}`))
+test.each([120, 60])(
+  "a body claim replaces the request's body while the header and options stay at width %d",
+  async (width) => {
+    await using plugin = await copyPlugin("permission-body")
+    await using state = await tmpdir()
+    await using setup = await createPermissionFixture(state.path, [plugin.directory], undefined, width)
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("Plugin body for") && frame.includes(setup.session.id) && frame.includes(setup.permission.id),
+    )
 
-  const frame = setup.captureCharFrame()
-  expect(frame).toContain("Permission required")
-  expect(frame).toContain("Allow once")
-  expect(frame).not.toContain("echo permission-fixture")
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Permission required")
+    expect(frame).toContain("Allow once")
+    expect(frame).not.toContain("echo permission-fixture")
 
-  // The options and their keys stay the host's.
-  setup.mockInput.pressEnter()
-  await setup.waitFor(() => setup.requests.length === 1)
-  expect(setup.requests).toEqual([{ decision: "once" }])
-})
+    // The options and their keys stay the host's.
+    setup.mockInput.pressEnter()
+    await setup.waitFor(() => setup.requests.length === 1)
+    expect(setup.requests).toEqual([{ decision: "once" }])
+  },
+)
 
 test("a body claim that returns the fallback shows the host's body, which still follows the selection", async () => {
   await using plugin = await copyPlugin("permission-body-decline")
@@ -122,7 +128,7 @@ test.each([
   expect(setup.renderer.isDestroyed).toBe(false)
 })
 
-async function createPermissionFixture(state: string, plugins: string[] = [], save?: string[]) {
+async function createPermissionFixture(state: string, plugins: string[] = [], save?: string[], width = 120) {
   const session = {
     id: `ses_slot_${crypto.randomUUID()}`,
     title: "Slot fixture",
@@ -144,7 +150,7 @@ async function createPermissionFixture(state: string, plugins: string[] = [], sa
   const location = { directory, project: { id: session.projectID, directory, canonical: directory } }
   const requests: unknown[] = []
   const setup = await createAppFixture({
-    width: 120,
+    width,
     height: 30,
     state,
     args: { sessionID: session.id },

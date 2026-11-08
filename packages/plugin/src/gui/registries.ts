@@ -922,9 +922,10 @@ export interface SlotMap {
   /**
    * Experimental: may change without compatibility guarantees. The body of the permission prompt above the composer:
    * the request's description, arguments and resources. Content here replaces them; the header and the buttons stay
-   * the host's, and the region scrolls when the content is taller than the prompt. Render `fallback()` to show the
-   * host's own body for the request, so an item can decline reactively and take the body only while it needs it.
-   * Without any item, the host shows its body.
+   * the host's. A long body grows the prompt up to the window's height, then scrolls. The region is a flex column, so
+   * size content by what it holds or give it `flex-shrink: 0`. Render `fallback()` to show the host's own body for the
+   * request, so an item can decline reactively and take the body only while it needs it. Without any item, the host
+   * shows its body.
    */
   readonly "experimental.session.permission.body": {
     /** The owning session screen; always present. */

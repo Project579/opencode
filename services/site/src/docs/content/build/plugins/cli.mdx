@@ -556,6 +556,11 @@ without compatibility guarantees). It receives `sessionID`, `requestID` and `fal
 the body, and the header, options and keys stay the host's. Render `fallback()` to show the host's body, so the claim
 can step aside whenever it has nothing to show.
 
+- The docked prompt is about 15 rows tall and clips a longer body. The fullscreen key shows the rest.
+- Toggling fullscreen remounts the claim, so keep its state outside `render`.
+- The fullscreen hint is part of the options row, so it disappears while a plugin claims the options. The key still
+  works.
+
 ```tsx
 context.ui.slot({
   replace: "experimental.session.permission.body",
