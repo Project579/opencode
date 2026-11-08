@@ -52,6 +52,47 @@ export function SessionPermissionDock(props: {
     </>
   )
 
+  const body = () => (
+    <>
+      <div data-slot="permission-row">
+        <span data-slot="permission-spacer" aria-hidden="true" />
+        <Show when={toolDescription()} fallback={<code data-slot="permission-action">{props.request.action}</code>}>
+          <div data-slot="permission-hint">{toolDescription()}</div>
+        </Show>
+      </div>
+
+      <Show when={props.request.message}>
+        {(message) => (
+          <div data-slot="permission-row">
+            <span data-slot="permission-spacer" aria-hidden="true" />
+            <div data-slot="permission-hint">{message()}</div>
+          </div>
+        )}
+      </Show>
+
+      <Show when={input().length > 0}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          {/* Scrolls rather than truncates: the user approves these arguments, so all of them must be reachable */}
+          <div data-slot="permission-input" data-scrollable>
+            <For each={input()}>{(line) => <code class="text-text-weak break-all">{line}</code>}</For>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={props.request.resources.length > 0}>
+        <div data-slot="permission-row">
+          <span data-slot="permission-spacer" aria-hidden="true" />
+          <div data-slot="permission-patterns">
+            <For each={props.request.resources}>
+              {(pattern) => <code class="text-text-base break-all">{pattern}</code>}
+            </For>
+          </div>
+        </div>
+      </Show>
+    </>
+  )
+
   return (
     <DockPrompt
       kind="permission"
@@ -90,42 +131,29 @@ export function SessionPermissionDock(props: {
         </>
       }
     >
-      <div data-slot="permission-row">
-        <span data-slot="permission-spacer" aria-hidden="true" />
-        <Show when={toolDescription()} fallback={<code data-slot="permission-action">{props.request.action}</code>}>
-          <div data-slot="permission-hint">{toolDescription()}</div>
+      {/* Scrolls when a plugin's body is taller than the dock; the host's own rows keep their own scrolling inside. */}
+      <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-auto" data-scrollable>
+        <Show when={props.context} fallback={body()}>
+          {(context) => (
+            <PluginSlot
+              at="experimental.session.permission.body"
+              fallback={body()}
+              input={{
+                get screen() {
+                  return context().screen
+                },
+                get session() {
+                  return context().session
+                },
+                get request() {
+                  return props.request
+                },
+                fallback: body,
+              }}
+            />
+          )}
         </Show>
       </div>
-
-      <Show when={props.request.message}>
-        {(message) => (
-          <div data-slot="permission-row">
-            <span data-slot="permission-spacer" aria-hidden="true" />
-            <div data-slot="permission-hint">{message()}</div>
-          </div>
-        )}
-      </Show>
-
-      <Show when={input().length > 0}>
-        <div data-slot="permission-row">
-          <span data-slot="permission-spacer" aria-hidden="true" />
-          {/* Scrolls rather than truncates: the user approves these arguments, so all of them must be reachable */}
-          <div data-slot="permission-input" data-scrollable>
-            <For each={input()}>{(line) => <code class="text-text-weak break-all">{line}</code>}</For>
-          </div>
-        </div>
-      </Show>
-
-      <Show when={props.request.resources.length > 0}>
-        <div data-slot="permission-row">
-          <span data-slot="permission-spacer" aria-hidden="true" />
-          <div data-slot="permission-patterns">
-            <For each={props.request.resources}>
-              {(pattern) => <code class="text-text-base break-all">{pattern}</code>}
-            </For>
-          </div>
-        </div>
-      </Show>
     </DockPrompt>
   )
 }

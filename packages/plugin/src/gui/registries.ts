@@ -919,6 +919,26 @@ export interface SlotMap {
      */
     readonly request: PermissionRequest
   }
+  /**
+   * Experimental: may change without compatibility guarantees. The body of the permission prompt above the composer:
+   * the request's description, arguments and resources. Content here replaces them; the header and the buttons stay
+   * the host's, and the region scrolls when the content is taller than the prompt. Render `fallback()` to show the
+   * host's own body for the request, so an item can decline reactively and take the body only while it needs it.
+   * Without any item, the host shows its body.
+   */
+  readonly "experimental.session.permission.body": {
+    /** The owning session screen; always present. */
+    readonly screen: SessionScreen
+    /**
+     * The routed session; a new object when another session is routed. The request may come from one of its subagent
+     * sessions, so reply with `request.sessionID`, not `session.id`.
+     */
+    readonly session: MountedSession
+    /** The pending permission request, as for `experimental.session.permission.actions`. */
+    readonly request: PermissionRequest
+    /** Renders the host's own body for this request. */
+    readonly fallback: () => JSX.Element
+  }
 }
 
 /** Content for one of the host's slots, typed by `at`. */

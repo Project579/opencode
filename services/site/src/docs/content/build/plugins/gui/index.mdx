@@ -1019,6 +1019,10 @@ ctx.add(Slot, {
   session, but the request may come from one of its subagent sessions: answer with
   `ctx.client.permission.reply({ sessionID: input.request.sessionID, requestID: input.request.id, decision })`. The
   prompt closes when the server reports the request answered.
+- `experimental.session.permission.body` holds the body of that prompt, its description, arguments and resources
+  (experimental: may change without compatibility guarantees). Content there replaces them, the header and buttons
+  stay, and the body scrolls when the content is taller than the prompt. It receives the same input as
+  `experimental.session.permission.actions` plus `fallback`. Render `input.fallback()` to show the host's body.
 - `order` sorts the items in one slot.
 
 `session.location.menu` receives `shown`, which is `true` while the project menu is open. Subscribe to location data
@@ -1057,6 +1061,12 @@ interface SlotMap {
     screen: SessionScreen
     session: MountedSession
     request: PermissionRequest
+  }
+  "experimental.session.permission.body": {
+    screen: SessionScreen
+    session: MountedSession
+    request: PermissionRequest
+    fallback(): JSX.Element
   }
 }
 ```

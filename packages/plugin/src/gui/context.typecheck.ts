@@ -120,6 +120,10 @@ equal<SlotMap["experimental.session.permission.actions"]["screen"], SessionScree
 
 equal<SlotMap["experimental.session.permission.actions"]["session"], MountedSession>(true)
 
+equal<SlotMap["experimental.session.permission.body"]["screen"], SessionScreen>(true)
+
+equal<SlotMap["experimental.session.permission.body"]["session"], MountedSession>(true)
+
 equal<SlotMap["window.bottom"]["screen"], never>(true)
 
 equal<PanelTab["fallback"], boolean | undefined>(true)
