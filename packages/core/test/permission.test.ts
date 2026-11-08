@@ -16,6 +16,7 @@ import { Session } from "@opencode/core/session"
 import { SessionTable } from "@opencode/core/session/sql"
 import { SessionStore } from "@opencode/core/session/store"
 import { ShellParse } from "@opencode/core/shell/parse"
+import { ShellSpacing } from "@opencode/core/shell/spacing"
 import { eq } from "drizzle-orm"
 import { location } from "./fixture/location"
 import { testEffect } from "./lib/effect"
@@ -1500,6 +1501,106 @@ describe("shell rules through wrapper commands", () => {
         ])
         expect((yield* ask("echo 'a  b'")).effect).toBe("deny")
         expect((yield* ask("echo 'a b'")).effect).toBe("allow")
+      }),
+    )
+    for (const command of [
+      "bash -co pipefail 'rm -rf x'",
+      "bash +o pipefail -c 'rm -rf x'",
+      "bash -c -o pipefail 'rm -rf x'",
+      "bash --norc -c 'rm -rf x'",
+      "env -S'-i rm -rf x'",
+      "env -S '-u X rm -rf x'",
+      "env -vS'rm -rf x'",
+      "env -uS'rm -rf x' rm -rf y",
+      "env -C/tmp -S'rm -rf x'",
+      "env --split-string='rm -rf x'",
+      "env --split-str='-i rm -rf x'",
+      "watch -n 1 -x rm -rf x",
+      "watch -xn1 rm -rf x",
+      "timeout --sig KILL 5 rm -rf x",
+      "timeout --kill 3 5 rm -rf x",
+      "strace --const-print-style raw rm -rf x",
+      "strace --summary-columns time rm -rf x",
+      "strace --syscall-limit 5 rm -rf x",
+      "strace --str 5 rm -rf x",
+      "nice --adj 5 rm -rf x",
+      "sudo --us root rm -rf x",
+      "firejail --net none rm -rf x",
+      "/usr/bin/rm -rf x",
+      "./rm -rf x",
+      "env /bin/rm -rf x",
+      "\\rm -rf x",
+      "rm\t-rf\tx",
+      "FOO=1\trm\t-rf\t$(pwd)",
+      "rm  -rf  `pwd`",
+    ])
+      it.live(`a deny holds through ${command}`, () =>
+        Effect.gen(function* () {
+          yield* setup([
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "shell", resource: "rm -rf *", effect: "deny" },
+          ])
+          expect((yield* ask(command)).effect).toBe("deny")
+        }),
+      )
+
+    for (const command of [
+      "echo x | xargs -0I{} sh -c '{}'",
+      "echo x | xargs -rI{} {} y",
+      "echo x | xargs -0i sh -c '{}'",
+      "echo x | xargs --replace sh -c '{}'",
+      "echo x | xargs --rep=% sh -c '%'",
+      "echo x | xargs flock /tmp/l -c",
+      "echo x | xargs su -c",
+      "echo x | xargs env -S",
+      "find . -exec su -c {} \\;",
+      "bash -o",
+      "bash $F",
+      "echo 'rm -rf x' | bash /dev/./stdin",
+      "echo 'rm -rf x' | bash /proc/thread-self/fd/0",
+      "echo 'rm -rf x' | bash //dev/stdin",
+      "echo 'rm -rf x' | bash /proc/$$/fd/0",
+      "bash <(echo rm -rf x)",
+      "/bin/r? -rf x",
+      "/bin/r[m] -rf x",
+      "/bin/r* -rf x",
+      "r{m,} -rf x",
+      "${X} -rf x",
+      "`echo rm` -rf x",
+    ])
+      it.live(`cannot read, so a deny rule makes it ask: ${command}`, () =>
+        Effect.gen(function* () {
+          yield* setup([
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "shell", resource: "rm -rf *", effect: "deny" },
+          ])
+          const service = yield* Permission.Service
+          expect((yield* request(command)).opaque, command).toBe(true)
+          const result = yield* ask(command)
+          expect(result.effect, command).not.toBe("allow")
+          if (result.effect === "ask") yield* service.reply({ requestID: result.id, reply: "once" })
+        }),
+      )
+
+    it.live("reads plain forms the new checks leave alone", () =>
+      Effect.gen(function* () {
+        for (const command of [
+          "echo x | xargs bash script.sh",
+          "[ -f x ] && echo y",
+          "echo x | xargs -0 -r rm",
+          "bash script.sh",
+          "timeout --foreground 5 make",
+        ])
+          expect((yield* request(command)).opaque, command).toBeUndefined()
+        expect((yield* request("/usr/bin/git status")).guards).toEqual(["git status"])
+      }),
+    )
+
+    it.live("spacing after a PowerShell stop-parsing token or inside curly quotes is kept", () =>
+      Effect.gen(function* () {
+        expect(ShellSpacing.collapse("icacls x  --%  /grant  a")).toBe("icacls x  --%  /grant  a")
+        expect(ShellSpacing.collapse("echo “a  b”  ‘c  d’  e")).toBe("echo “a  b” ‘c  d’ e")
+        expect(ShellSpacing.collapse("echo  a")).toBe("echo a")
       }),
     )
   })

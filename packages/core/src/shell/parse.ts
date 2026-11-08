@@ -184,6 +184,7 @@ const WRAPPERS: Record<
   string,
   {
     values?: ReadonlyArray<string>
+    flags?: ReadonlyArray<string>
     operands?: number
     assignments?: true
     script?: ReadonlyArray<string>
@@ -194,15 +195,20 @@ const WRAPPERS: Record<
   builtin: {},
   busybox: {},
   chronic: {},
-  chroot: { values: ["--userspec", "--groups"], operands: 1 },
+  chroot: { values: ["--userspec", "--groups"], flags: ["--skip-chdir"], operands: 1 },
   command: {},
   coproc: {},
   doas: { values: ["-a", "-u", "-C"], shell: ["-s"] },
-  env: { values: ["-a", "-u", "-C", "-P", "--argv0", "--unset", "--chdir"], assignments: true },
+  env: {
+    values: ["-a", "-u", "-C", "-P", "--argv0", "--unset", "--chdir"],
+    flags: ["--ignore-environment", "--null", "--debug", "--ignore-signal", "--default-signal", "--block-signal"],
+    assignments: true,
+  },
   exec: { values: ["-a"] },
   firejail: {},
   flock: {
     values: ["-w", "-E", "--wait", "--timeout", "--conflict-exit-code"],
+    flags: ["--shared", "--exclusive", "--unlock", "--nonblock", "--close", "--no-fork", "--verbose"],
     operands: 1,
     script: ["-c", "--command"],
   },
@@ -212,19 +218,26 @@ const WRAPPERS: Record<
       ...["-a", "-A", "-D", "-e", "-F", "-l", "-n", "-o", "-p", "-s", "-u", "-w", "-x"],
       ...["--align", "--config", "--debug", "--indent", "--library", "--output", "--where"],
     ],
+    flags: ["--demangle"],
   },
   nice: { values: ["-n", "--adjustment"] },
   nocorrect: {},
   noglob: {},
   nohup: {},
-  setsid: {},
+  setsid: { flags: ["--ctty", "--fork", "--wait"] },
   stdbuf: { values: ["-i", "-o", "-e", "--input", "--output", "--error"] },
   strace: {
     values: [
       ...["-a", "-b", "-e", "-E", "-I", "-o", "-O", "-p", "-P", "-s", "-S", "-u", "-U", "-X"],
       ...["--attach", "--columns", "--env", "--output", "--string-limit", "--summary-sort-by"],
       ...["--trace-path", "--user", "--trace", "--signal", "--status", "--abbrev", "--verbose", "--raw"],
-      ...["--read", "--write", "--fault", "--inject", "--trace-fds", "--detach-on"],
+      ...["--read", "--write", "--fault", "--inject", "--trace-fds", "--detach-on", "--const-print-style"],
+      ...["--interruptible", "--summary-columns", "--summary-syscall-overhead", "--syscall-limit", "--kvm"],
+    ],
+    flags: [
+      ...["--follow-forks", "--output-separately", "--summary-only", "--summary", "--summary-wall-clock"],
+      ...["--no-abbrev", "--instruction-pointer", "--stack-trace", "--timestamps", "--relative-timestamps"],
+      ...["--syscall-times", "--seccomp-bpf", "--quiet", "--decode-fds", "--decode-pids", "--daemonize"],
     ],
   },
   sudo: {
@@ -235,15 +248,38 @@ const WRAPPERS: Record<
       ...["--user", "--group", "--host", "--prompt", "--close-from", "--chdir", "--chroot", "--role", "--type"],
       ...["--command-timeout", "--other-user"],
     ],
+    flags: [
+      ...["--askpass", "--background", "--bell", "--edit", "--help", "--list", "--login", "--non-interactive"],
+      ...["--preserve-env", "--preserve-groups", "--remove-timestamp", "--reset-timestamp", "--set-home"],
+      ...["--shell", "--stdin", "--validate", "--version"],
+    ],
   },
-  time: { values: ["-f", "-o", "--format", "--output"] },
-  timeout: { values: ["-s", "-k", "--signal", "--kill-after"], operands: 1 },
+  time: {
+    values: ["-f", "-o", "--format", "--output"],
+    flags: ["--append", "--portability", "--quiet", "--verbose"],
+  },
+  timeout: {
+    values: ["-s", "-k", "--signal", "--kill-after"],
+    flags: ["--foreground", "--preserve-status", "--verbose"],
+    operands: 1,
+  },
   unbuffer: {},
-  watch: { values: ["-n", "-q", "--interval", "--equexit"], joins: true },
+  watch: {
+    values: ["-n", "-q", "--interval", "--equexit"],
+    flags: [
+      ...["--beep", "--color", "--no-color", "--differences", "--errexit", "--chgexit", "--exec", "--no-title"],
+      ...["--no-wrap", "--no-linewrap", "--precise"],
+    ],
+    joins: true,
+  },
   xargs: {
     values: [
       ...["-a", "-d", "-E", "-I", "-J", "-L", "-n", "-P", "-R", "-s"],
       ...["--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"],
+    ],
+    flags: [
+      ...["--null", "--no-run-if-empty", "--verbose", "--interactive", "--exit", "--open-tty", "--show-limits"],
+      ...["--replace", "--eof"],
     ],
   },
 }
@@ -252,7 +288,7 @@ const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"])
 const MAX_WRAPPER_DEPTH = 8
 const RUNNERS = new Set([...Object.keys(WRAPPERS), ...SHELLS, "eval", "find", "su"])
 const FIND_WRITES = new Set(["-delete", "-fls", "-fprint", "-fprint0", "-fprintf"])
-const STDIN_FILE = /^\/(?:dev\/stdin|dev\/fd\/\d+|proc\/self\/fd\/\d+)$/
+const STDIN_FILE = /^\/(?:dev\/stdin|dev\/fd\/\d+|proc\/(?:self|thread-self|\d+)\/fd\/\d+)$/
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/
 
 export function scan(command: string, shell: string, cwd: string): Effect.Effect<Result, Error> {
@@ -350,8 +386,11 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
       // request offers no "always" instead.
       if ((exact && /[*?]/.test(item.resource)) || /[*?]/.test(head) || (!wrapped && /[*?]/.test(save.slice(0, -1))))
         output.unsavable = true
-      // A command name the shell expands at run time cannot be matched by rules.
-      if (wrapped?.opaque || (!powershell && !isStaticBashWord(item.rawWords[0] ?? ""))) {
+      // A command name the shell expands or globs at run time cannot be matched by rules.
+      if (
+        wrapped?.opaque ||
+        (!powershell && (!isStaticBashWord(item.rawWords[0] ?? "") || hasGlob(item.rawWords[0] ?? "")))
+      ) {
         output.opaque = true
         output.unsavable = true
       }
@@ -366,6 +405,7 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
       const guards = [
         ...(plain && !item.resource.startsWith(item.rawWords.join(" ")) ? [item.rawWords.join(" ")] : []),
         ...(plain && item.rawWords.some((raw, index) => raw !== item.words[index]) ? [item.words.join(" ")] : []),
+        ...(plain ? basenamed(item.words, item.rawWords) : []),
         ...(wrapped?.guards ?? []),
       ]
       if (guards.length > 0) output.guards = [...(output.guards ?? []), ...guards]
@@ -741,6 +781,8 @@ const OPAQUE: Wrapped = { guards: [], opaque: true }
  * xargs appends it as further arguments.
  */
 type Supply = { replace?: string; appended?: true }
+/** Where a wrapped command starts, the words `env -S` splits into a new env command line, or no command. */
+type Start = number | { split: string[]; index: number } | undefined
 
 /**
  * What a wrapper such as `env`, `xargs`, `find -exec` or `bash -c` runs: a guard for each command, so rules for it
@@ -764,28 +806,44 @@ function unwrap(
   if (head === "find") return findExec(words, raw, dialect, depth)
   const spec = WRAPPERS[head]
   if (!spec) return
-  const start = commandStart(words, head, spec)
-  // Without a command, a wrapper under xargs runs its input, and a login shell option reads stdin.
-  if (start === undefined)
-    return supply?.appended || words.slice(1).some((word) => spec.shell?.some((option) => clusterHas(word, option)))
-      ? OPAQUE
-      : { guards: [] }
-  if (typeof start === "object") return script(start.text, start.static(raw), dialect, depth, supply)
-  if (spec.script?.includes(words[start]))
-    return start + 1 < words.length
-      ? script(words[start + 1], isStaticBashWord(raw[start + 1]), dialect, depth, supply)
-      : { guards: [] }
-  // `watch` hands its operands, joined by spaces, to `sh -c`, unless `-x` runs them directly.
-  if (spec.joins && !words.slice(1, start).some((word) => clusterHas(word, "-x") || word === "--exec"))
-    return script(words.slice(start).join(" "), raw.slice(start).every(isStaticBashWord), "posix", depth, supply)
-  const inner = command(
-    words.slice(start),
-    raw.slice(start),
-    dialect,
-    depth,
-    head === "xargs" ? xargsSupply(words.slice(1, start)) : supply,
-  )
-  return { ...inner, prefix: inner.prefix && [...raw.slice(0, start), ...inner.prefix] }
+  const parsed = commandStart(words, head, spec)
+  const run = (start: Start): Wrapped => {
+    // Without a command, a wrapper under xargs runs its input, and a login shell option reads stdin.
+    if (start === undefined)
+      return supply?.appended || words.slice(1).some((word) => spec.shell?.some((option) => clusterHas(word, option)))
+        ? OPAQUE
+        : { guards: [] }
+    // `env -S` splits its text into a new env command line, options included.
+    if (typeof start === "object") {
+      if (!raw.slice(start.index).every(isStaticBashWord)) return OPAQUE
+      return unwrap(["env", ...start.split], ["env", ...start.split], dialect, depth + 1, supply) ?? { guards: [] }
+    }
+    if (spec.script?.includes(words[start]))
+      return start + 1 < words.length
+        ? script(words[start + 1], isStaticBashWord(raw[start + 1]), dialect, depth, supply)
+        : supply?.appended
+          ? OPAQUE
+          : { guards: [] }
+    // `watch` hands its operands, joined by spaces, to `sh -c`, unless `-x` runs them directly.
+    if (spec.joins && !words.slice(1, start).some((word) => clusterHas(word, "-x") || word === "--exec"))
+      return script(words.slice(start).join(" "), raw.slice(start).every(isStaticBashWord), "posix", depth, supply)
+    const inner = command(
+      words.slice(start),
+      raw.slice(start),
+      dialect,
+      depth,
+      head === "xargs" ? xargsSupply(words.slice(1, start)) : supply,
+    )
+    return { ...inner, prefix: inner.prefix && [...raw.slice(0, start), ...inner.prefix] }
+  }
+  const primary = run(parsed.start)
+  const others = parsed.alternatives.filter((start) => start !== parsed.start).map(run)
+  return {
+    // A save covering one reading of an option the table does not pin could cover a different command in another.
+    prefix: parsed.alternatives.length > 0 ? undefined : primary.prefix,
+    guards: [...primary.guards, ...others.flatMap((item) => item.guards)],
+    ...(primary.opaque || others.some((item) => item.opaque) ? { opaque: true as const } : {}),
+  }
 }
 
 function command(words: string[], raw: string[], dialect: ShellScan.Dialect, depth: number, supply?: Supply): Wrapped {
@@ -793,8 +851,12 @@ function command(words: string[], raw: string[], dialect: ShellScan.Dialect, dep
   if (CWD.has(words[0] ?? "") || ShellScan.declarations.has(words[0] ?? ""))
     return { prefix: raw.slice(0, 1), guards: [] }
   const exact = raw.join(" ")
-  // A command name the shell expands at run time, or that xargs or find fill in from input, cannot be matched.
-  if (!isStaticBashWord(raw[0] ?? "") || (supply?.replace !== undefined && (words[0] ?? "").includes(supply.replace)))
+  // A command name the shell expands or globs at run time, or that xargs or find fill in from input, cannot be matched.
+  if (
+    !isStaticBashWord(raw[0] ?? "") ||
+    hasGlob(raw[0] ?? "") ||
+    (supply?.replace !== undefined && (words[0] ?? "").includes(supply.replace))
+  )
     return { guards: [exact], opaque: true }
   const unquoted = words.join(" ")
   const nested =
@@ -805,7 +867,7 @@ function command(words: string[], raw: string[], dialect: ShellScan.Dialect, dep
         : undefined
   return {
     prefix: nested ? nested.prefix : prefix(raw.slice(0, PREFIX_LENGTH)),
-    guards: [exact, ...(unquoted === exact ? [] : [unquoted]), ...(nested?.guards ?? [])],
+    guards: [exact, ...(unquoted === exact ? [] : [unquoted]), ...basenamed(words, raw), ...(nested?.guards ?? [])],
     ...(nested?.opaque ? { opaque: true as const } : {}),
   }
 }
@@ -839,7 +901,14 @@ function shell(words: string[], raw: string[], head: string, depth: number, supp
   const dialect = head === "zsh" || head === "bash" ? head : "posix"
   if (operand.kind === "inline")
     return file === undefined ? OPAQUE : script(file, isStaticBashWord(raw[operand.index]), dialect, depth, supply)
-  if (STDIN_FILE.test(file) || (supply?.replace !== undefined && file.includes(supply.replace))) return OPAQUE
+  // A file the shell expands, a process substitution, a path to stdin or input xargs or find supply is unreadable.
+  if (
+    !isStaticBashWord(raw[operand.index]) ||
+    /^[<>=]\(/.test(file) ||
+    STDIN_FILE.test(path.posix.normalize(file)) ||
+    (supply?.replace !== undefined && file.includes(supply.replace))
+  )
+    return OPAQUE
   return { prefix: raw.slice(0, operand.index + 1), guards: [] }
 }
 
@@ -870,7 +939,9 @@ function su(words: string[], raw: string[], dialect: ShellScan.Dialect, depth: n
   if (index >= 0)
     return index + 1 < words.length
       ? script(words[index + 1], isStaticBashWord(raw[index + 1]), dialect, depth, supply)
-      : { guards: [] }
+      : supply?.appended
+        ? OPAQUE
+        : { guards: [] }
   const inline = words.findIndex((word) => word.startsWith("--command="))
   if (inline >= 0)
     return script(words[inline].slice("--command=".length), isStaticBashWord(raw[inline]), dialect, depth, supply)
@@ -892,16 +963,37 @@ function findExec(words: string[], raw: string[], dialect: ShellScan.Dialect, de
   }
 }
 
-// xargs appends its input as arguments, or puts it where the `-I`, `-i` or `-J` replace string is.
+// xargs appends its input as arguments, or puts it where its replace string (`-I`, `-i`, `-J`, `--replace`) is.
 function xargsSupply(options: string[]): Supply {
   const replace = options.flatMap((word, index) => {
-    if (word === "-I" || word === "-J") return [options[index + 1] ?? ""]
-    if (/^-[IJi]./.test(word)) return [word.slice(2)]
-    if (word === "-i" || word === "--replace") return ["{}"]
-    if (word.startsWith("--replace=")) return [word.slice("--replace=".length)]
+    if (word.startsWith("--")) {
+      const equals = word.indexOf("=")
+      const name = equals < 0 ? word : word.slice(0, equals)
+      return name.length >= 4 && "--replace".startsWith(name) ? [equals < 0 ? "{}" : word.slice(equals + 1)] : []
+    }
+    if (!word.startsWith("-")) return []
+    // In a cluster such as `-0I{}`, the first option that takes a value takes the rest of the word or the next word.
+    const position = [...word.slice(1)].findIndex((letter) => "IJiadeELlnPsR".includes(letter))
+    if (position < 0) return []
+    const letter = word[position + 1]
+    const rest = word.slice(position + 2)
+    if (letter === "I" || letter === "J") return [rest || (options[index + 1] ?? "")]
+    if (letter === "i") return [rest || "{}"]
     return []
   })[0]
   return replace === undefined ? { appended: true } : { replace }
+}
+
+/** The command named by the basename of a path such as /usr/bin/rm, which rules name it by. */
+function basenamed(words: string[], raw: string[]) {
+  const name = words[0] ?? ""
+  const base = path.posix.basename(name)
+  return name.includes("/") && base && base !== name ? [[base, ...raw.slice(1)].join(" ")] : []
+}
+
+/** Whether an unquoted part of a word holds a glob, such as `r?` or `r[m]`, which picks a name at run time. */
+function hasGlob(raw: string) {
+  return /[*?]|\[[^\]]+\]/.test(raw.replace(/'[^']*'|"[^"]*"|\\./g, ""))
 }
 
 /** Whether an option word, alone or in a cluster such as `-iu`, is the given option. */
@@ -923,9 +1015,19 @@ function respace<Item extends { resource: string; commandOffset?: number }>(item
   }
 }
 
-/** Where the wrapped command starts, or the text `env -S` splits into one. */
-function commandStart(words: string[], head: string, spec: (typeof WRAPPERS)[string]) {
-  let index = 1
+/**
+ * Where the wrapped command starts. `alternatives` are the starts under the other reading of each long option the
+ * table does not name exactly: GNU accepts any unambiguous prefix, and a table can miss an option, so such an option
+ * might or might not take the next word, and the command is guarded under both readings.
+ */
+function commandStart(
+  words: string[],
+  head: string,
+  spec: (typeof WRAPPERS)[string],
+  from = 1,
+): { start: Start; alternatives: Start[] } {
+  let index = from
+  const alternatives: Start[] = []
   while (index < words.length) {
     const word = words[index]
     if (word === "--") {
@@ -938,15 +1040,26 @@ function commandStart(words: string[], head: string, spec: (typeof WRAPPERS)[str
     }
     if (!word.startsWith("-") || word === "-") break
     // `command -v` and `sudo -e` look up or edit their operands instead of running them.
-    if (head === "command" && /^-p*[vV]/.test(word)) return
-    if (head === "sudo" && (word === "-e" || word === "--edit")) return
+    if (head === "command" && /^-p*[vV]/.test(word)) return { start: undefined, alternatives }
+    if (head === "sudo" && (word === "-e" || word === "--edit")) return { start: undefined, alternatives }
     if (head === "env") {
       const split = splitString(words, index)
-      if (split !== undefined)
-        return { text: split, static: (raw: string[]) => raw.slice(index).every(isStaticBashWord) }
+      if (split !== undefined) return { start: { split, index }, alternatives }
     }
     if (word.startsWith("--")) {
-      index += !word.includes("=") && spec.values?.includes(word) ? 2 : 1
+      if (word.includes("=") || spec.flags?.includes(word)) {
+        index++
+        continue
+      }
+      if (spec.values?.includes(word)) {
+        index += 2
+        continue
+      }
+      const valued =
+        word.length >= 4 && (spec.values ?? []).some((option) => option.startsWith("--") && option.startsWith(word))
+      const other = commandStart(words, head, spec, index + (valued ? 1 : 2))
+      alternatives.push(other.start, ...other.alternatives)
+      index += valued ? 2 : 1
       continue
     }
     // In a cluster such as `-un`, a value option takes the next word only when it comes last.
@@ -955,19 +1068,30 @@ function commandStart(words: string[], head: string, spec: (typeof WRAPPERS)[str
   }
   if (spec.assignments) while (ASSIGNMENT.test(words[index] ?? "")) index++
   index += spec.operands ?? 0
-  return index < words.length ? index : undefined
+  return { start: index < words.length ? index : undefined, alternatives }
 }
 
-/** The text `env -S` splits into a command, when the option at index is `-S`, `--split-string` or ends a cluster. */
+/**
+ * The words of the new env command line `env -S` splits its text into, when the option at index is `-S`,
+ * `--split-string` or a prefix of it, or ends a cluster.
+ */
 function splitString(words: string[], index: number) {
   const word = words[index]
-  const rest = words.slice(index + 1)
-  if (word === "--split-string") return rest.join(" ")
-  if (word.startsWith("--split-string=")) return [word.slice("--split-string=".length), ...rest].join(" ")
-  if (word.startsWith("--")) return
-  // Like getopt, the first option in a cluster that takes a value takes the rest of the word, as `-iS'cmd'` does.
-  const letter = [...word.slice(1)].findIndex((char) => char === "S" || WRAPPERS.env.values?.includes(`-${char}`))
-  if (letter < 0 || word[letter + 1] !== "S") return
-  const attached = word.slice(letter + 2)
-  return attached ? [attached, ...rest].join(" ") : rest.join(" ")
+  const equals = word.indexOf("=")
+  const name = equals < 0 ? word : word.slice(0, equals)
+  const value = (() => {
+    if (name.startsWith("--"))
+      return name.length >= 4 && "--split-string".startsWith(name)
+        ? equals < 0
+          ? { text: words[index + 1] ?? "", next: index + 2 }
+          : { text: word.slice(equals + 1), next: index + 1 }
+        : undefined
+    // Like getopt, the first option in a cluster that takes a value takes the rest of the word, as `-iS'cmd'` does.
+    const letter = [...word.slice(1)].findIndex((char) => char === "S" || WRAPPERS.env.values?.includes(`-${char}`))
+    if (letter < 0 || word[letter + 1] !== "S") return
+    const attached = word.slice(letter + 2)
+    return attached ? { text: attached, next: index + 1 } : { text: words[index + 1] ?? "", next: index + 2 }
+  })()
+  if (!value) return
+  return [...value.text.split(/[ \t\n]+/).filter(Boolean), ...words.slice(value.next)]
 }
