@@ -791,7 +791,7 @@ OpenCode can be configured using environment variables.
 
 ### Process wrapper
 
-`OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER` plugs an external sandbox into the server. For example, `OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER='["sandbox-tool","--"]'` runs every process the server starts through its process spawner as `sandbox-tool -- <command> <args…>`. Unset, empty, or `[]` changes nothing, and any other value that is not a JSON array of strings stops the server from starting.
+Experimental: `OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER` plugs an external sandbox into the server. For example, `OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER='["sandbox-tool","--"]'` runs every process the server starts through its process spawner as `sandbox-tool -- <command> <args…>`. Unset, empty, or `[]` changes nothing, and any other value that is not a JSON array of strings stops the server from starting.
 
 - The server reads it once at start, like the other server variables. Set it where the server starts, such as the service unit, or for the desktop app the login environment (for example a file in `~/.config/environment.d/`). An already-running server keeps its own value. The server removes the variable from its own environment after reading it, so processes it starts, including a nested `opencode`, do not inherit it.
 - The first entry is resolved once at server start against the server's own `PATH`; an absolute path works too. If it is not found, the server does not start. A repo `opencode.json` cannot change or remove the wrapper.

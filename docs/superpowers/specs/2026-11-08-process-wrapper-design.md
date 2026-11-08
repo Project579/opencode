@@ -29,7 +29,7 @@ The owner wants one generic way to route all of them through a wrapper of the us
 
 - Any behaviour change when the option is unset.
 - Naming or assuming a specific sandbox tool anywhere in core.
-- Wrapping a spawn more than once: the prefix is applied once per spawn (the spawner never re-enters itself for a segment); double wrapping through `SHELL` is a docs matter.
+- Wrapping a spawn more than once: the prefix is applied once per spawn (the spawner never re-enters itself for a segment); double wrapping through `SHELL` is a docs matter; the server removes the variable from its environment after reading it, so a nested `opencode` does not wrap again (2026-11-08, owner).
 - Breaking process-group termination: OpenCode kills the whole process group, so a wrapper that started a new session would orphan children.
 - A repo's `opencode.json` being able to remove or change the wrapper (see Decided).
 

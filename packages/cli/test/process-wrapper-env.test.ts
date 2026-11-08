@@ -28,7 +28,7 @@ describe("takeProcessWrapper", () => {
   })
 
   test("returns no wrapper and leaves the environment alone when the variable is unset", () => {
-    const env: Record<string, string | undefined> = { OTHER: "kept" }
+    const env = { OTHER: "kept" }
     expect(ServerProcess.takeProcessWrapper(env)).toBeUndefined()
     expect(env).toEqual({ OTHER: "kept" })
   })
@@ -44,5 +44,6 @@ describe("takeProcessWrapper", () => {
     expect(() => ServerProcess.takeProcessWrapper(env)).toThrow(
       "OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER must be a JSON array of strings",
     )
+    expect(env).toEqual({})
   })
 })
