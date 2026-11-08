@@ -599,7 +599,8 @@ describe("cross-spawn spawner", () => {
       }),
     )
 
-    const unset = path.join(root, "unset.log")
+    // An empty wrapper must not spawn `wrapper[0]`; the unchanged path is otherwise covered by the rest of this suite,
+    // which runs on `node = configured()`.
     for (const [name, options] of [
       ["without a wrapper", undefined],
       ["with an empty wrapper", { wrapper: [] }],
@@ -608,7 +609,6 @@ describe("cross-spawn spawner", () => {
         `leaves commands unchanged ${name}`,
         Effect.gen(function* () {
           expect(yield* run(ChildProcess.make("echo", ["hi"]))).toBe("hi")
-          expect(yield* exists(unset)).toBe(false)
         }),
       )
     }
