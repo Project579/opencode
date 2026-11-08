@@ -1,9 +1,10 @@
-import { describe, expect } from "bun:test"
+import { afterAll, describe, expect } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { inspect } from "node:util"
-import { Cause, Deferred, Effect, Exit, PlatformError, Redacted, Stream } from "effect"
+import { Cause, Deferred, Effect, Exit, PlatformError, Redacted, Schedule, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -531,6 +532,196 @@ describe("cross-spawn spawner", () => {
         yield* handle.exitCode
         expect(out).toContain("stdout")
         expect(out).toContain("stderr")
+      }),
+    )
+  })
+
+  describe.skipIf(process.platform === "win32")("wrapper", () => {
+    const fixtureDir = path.join(import.meta.dir, "../fixture")
+    const fixture = path.join(fixtureDir, "record-wrapper.sh")
+    const root = mkdtempSync(path.join(os.tmpdir(), "opencode-core-wrapper-"))
+    afterAll(() => rmSync(root, { recursive: true, force: true }))
+
+    // Each test owns one log, so the wrapper layers can be built at definition time.
+    const wrap = (name: string, ...rest: Array<string>) => {
+      const log = path.join(root, `${name}.log`)
+      return {
+        log,
+        fx: testEffect(LayerNode.compile(CrossSpawnSpawner.configured({ wrapper: [fixture, log, ...rest] }))),
+      }
+    }
+    const lines = (log: string) =>
+      Effect.tryPromise(() => fs.readFile(log, "utf8")).pipe(
+        Effect.map((text) => text.split("\n").filter(Boolean)),
+        Effect.orElseSucceed(() => [] as Array<string>),
+      )
+    const exists = (log: string) =>
+      Effect.promise(() =>
+        fs.access(log).then(
+          () => true,
+          () => false,
+        ),
+      )
+    // The wrapper writes its log before it runs the command, so a line proves the command is about to start.
+    const logged = (log: string, count = 1) =>
+      lines(log).pipe(
+        Effect.repeat({
+          until: (found) => found.length >= count,
+          schedule: Schedule.spaced("20 millis"),
+        }),
+        Effect.timeout("5 seconds"),
+      )
+    const run = (command: ChildProcess.Command) =>
+      ChildProcessSpawner.ChildProcessSpawner.use((svc) => svc.string(command)).pipe(Effect.map((out) => out.trim()))
+
+    const echo = wrap("argv")
+    echo.fx.effect(
+      "wraps a command with the configured argv",
+      Effect.gen(function* () {
+        expect(yield* run(ChildProcess.make("echo", ["hi"]))).toBe("hi")
+        expect(yield* lines(echo.log)).toEqual(["echo hi"])
+      }),
+    )
+
+    const passthrough = wrap("passthrough")
+    passthrough.fx.effect(
+      "passes cwd and env through the wrapper",
+      Effect.gen(function* () {
+        const tmp = yield* Effect.acquireRelease(
+          Effect.promise(() => tmpdir()),
+          (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+        )
+        const cwd = yield* run(ChildProcess.make("pwd", [], { cwd: tmp.path }))
+        expect(yield* Effect.promise(() => fs.realpath(cwd))).toBe(yield* Effect.promise(() => fs.realpath(tmp.path)))
+        const env = yield* run(ChildProcess.make("env", [], { env: { X: "1" }, extendEnv: true }))
+        expect(env.split("\n")).toContain("X=1")
+        expect(yield* lines(passthrough.log)).toEqual(["pwd", "env"])
+      }),
+    )
+
+    const unset = path.join(root, "unset.log")
+    for (const [name, options] of [
+      ["without a wrapper", undefined],
+      ["with an empty wrapper", { wrapper: [] }],
+    ] as const) {
+      testEffect(LayerNode.compile(CrossSpawnSpawner.configured(options))).effect(
+        `leaves commands unchanged ${name}`,
+        Effect.gen(function* () {
+          expect(yield* run(ChildProcess.make("echo", ["hi"]))).toBe("hi")
+          expect(yield* exists(unset)).toBe(false)
+        }),
+      )
+    }
+
+    const bypass = wrap("bypass")
+    bypass.fx.effect(
+      "skips wrapping under Bypass",
+      Effect.gen(function* () {
+        const out = yield* run(ChildProcess.make("echo", ["hi"])).pipe(
+          Effect.provideService(CrossSpawnSpawner.Bypass, true),
+        )
+        expect(out).toBe("hi")
+        expect(yield* exists(bypass.log)).toBe(false)
+        // The Reference default wraps again once the override ends.
+        expect(yield* run(ChildProcess.make("echo", ["again"]))).toBe("again")
+        expect(yield* lines(bypass.log)).toEqual(["echo again"])
+      }),
+    )
+
+    const piped = wrap("piped")
+    piped.fx.effect(
+      "wraps each segment of a piped command",
+      Effect.gen(function* () {
+        const out = yield* run(ChildProcess.make("echo", ["a"]).pipe(ChildProcess.pipeTo(ChildProcess.make("cat"))))
+        expect(out).toBe("a")
+        expect((yield* lines(piped.log)).toSorted()).toEqual(["cat", "echo a"])
+      }),
+    )
+
+    // Resolved the way a bare command is: through the PATH of the command's own environment.
+    const bare = path.join(root, "bare.log")
+    testEffect(LayerNode.compile(CrossSpawnSpawner.configured({ wrapper: [path.basename(fixture), bare] }))).effect(
+      "resolves a bare wrapper name through PATH",
+      Effect.gen(function* () {
+        const out = yield* run(
+          ChildProcess.make("echo", ["hi"], {
+            env: { PATH: `${fixtureDir}:${process.env.PATH}` },
+            extendEnv: true,
+          }),
+        )
+        expect(out).toBe("hi")
+        expect(yield* lines(bare)).toEqual(["echo hi"])
+      }),
+    )
+
+    testEffect(LayerNode.compile(CrossSpawnSpawner.configured({ wrapper: ["no-such-wrapper-12345"] }))).effect(
+      "fails with a spawn error when the wrapper cannot be found",
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(run(ChildProcess.make("echo", ["hi"])))
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isSuccess(exit)) return
+        expect(Cause.hasDies(exit.cause)).toBe(false)
+        const error = Cause.squash(exit.cause)
+        expect(PlatformError.isPlatformError(error) && error.reason._tag).toBe("NotFound")
+        // The message names the wrapper, which is what failed to start.
+        expect(inspect(exit, { depth: Infinity })).toContain("no-such-wrapper-12345 echo hi")
+      }),
+    )
+
+    const resident = wrap("resident", "--resident")
+    resident.fx.live(
+      "stops a resident wrapper and its child on timeout",
+      Effect.gen(function* () {
+        const pids = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const handle = yield* ChildProcess.make("sleep", ["30"])
+            const child = Number((yield* logged(resident.log))[0])
+            expect(alive(child)).toBe(true)
+            expect(alive(handle.pid)).toBe(true)
+            const exit = yield* Effect.exit(handle.exitCode.pipe(Effect.timeout("200 millis")))
+            expect(Exit.isFailure(exit)).toBe(true)
+            return { child, wrapper: Number(handle.pid) }
+          }),
+        )
+        expect(yield* Effect.promise(() => gone(pids.wrapper))).toBe(true)
+        expect(yield* Effect.promise(() => gone(pids.child))).toBe(true)
+      }),
+      10_000,
+    )
+
+    const redacted = wrap("redacted")
+    redacted.fx.live(
+      "keeps redacted arguments redacted when a wrapped process is killed",
+      Effect.gen(function* () {
+        // `sh -c` takes the secret as $0, which keeps the command alive where `sleep s3cret` would fail at once.
+        const killed = yield* Effect.exit(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const handle = yield* ChildProcess.make("sh", ["-c", "sleep 30", Redacted.make("s3cret")])
+              yield* logged(redacted.log)
+              yield* handle.kill()
+              return yield* handle.exitCode
+            }),
+          ),
+        )
+        // The child received the real value.
+        expect(yield* lines(redacted.log)).toEqual(["sh -c sleep 30 s3cret"])
+        // A killed process reports its command, which must not reveal the argument.
+        expect(Exit.isFailure(killed)).toBe(true)
+        if (Exit.isSuccess(killed)) return
+        const text = `${Cause.pretty(killed.cause)}\n${inspect(killed, { depth: Infinity })}`
+        expect(text).toContain("<redacted>")
+        expect(text).not.toContain("s3cret")
+      }),
+      10_000,
+    )
+
+    const shell = wrap("shell")
+    shell.fx.effect(
+      "wraps a shell: true command",
+      Effect.gen(function* () {
+        expect(yield* run(ChildProcess.make("echo hi", [], { shell: true }))).toBe("hi")
+        expect(yield* lines(shell.log)).toEqual(["echo hi"])
       }),
     )
   })
