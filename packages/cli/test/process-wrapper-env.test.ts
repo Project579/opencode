@@ -11,6 +11,8 @@ describe("processWrapper", () => {
   })
 
   test.each(['"w"', "[1]", "not json"])("rejects %p naming the variable", (raw) => {
-    expect(() => ServerProcess.processWrapper(raw)).toThrow("OPENCODE_PROCESS_WRAPPER must be a JSON array of strings")
+    expect(() => ServerProcess.processWrapper(raw)).toThrow(
+      "OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER must be a JSON array of strings",
+    )
   })
 })
