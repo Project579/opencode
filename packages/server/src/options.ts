@@ -57,8 +57,9 @@ export const ServerOptions = Schema.Struct({
         Schema.Struct({
           /**
            * Argv prefix for every process the host spawner starts, for plugging in an external sandbox. The first
-           * entry is the program, resolved through `PATH`; the rest precede the original command and its arguments.
-           * Empty or absent leaves processes unchanged.
+           * entry is the program, resolved once at server start against the server's own `PATH` (an absolute path
+           * works too); server start fails if it is not found. The rest precede the original command and its
+           * arguments. Empty or absent leaves processes unchanged.
            */
           wrapper: Schema.optional(Schema.Array(Schema.String)),
         }),

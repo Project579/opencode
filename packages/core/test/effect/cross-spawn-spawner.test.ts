@@ -1,4 +1,4 @@
-import { afterAll, describe, expect } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -638,35 +638,39 @@ describe("cross-spawn spawner", () => {
       }),
     )
 
-    // Resolved the way a bare command is: through the PATH of the command's own environment.
+    // `sh` is a bare name on the test process's PATH. The command's own PATH puts a decoy `sh` first, which must not
+    // run: the wrapper is resolved against the server's PATH, not the one project config can set for a command.
     const bare = path.join(root, "bare.log")
-    testEffect(LayerNode.compile(CrossSpawnSpawner.configured({ wrapper: [path.basename(fixture), bare] }))).effect(
-      "resolves a bare wrapper name through PATH",
+    const decoy = path.join(root, "decoy")
+    testEffect(LayerNode.compile(CrossSpawnSpawner.configured({ wrapper: ["sh", fixture, bare] }))).effect(
+      "resolves a bare wrapper name through the server PATH, not the command's",
       Effect.gen(function* () {
+        const decoyLog = path.join(decoy, "decoy.log")
+        yield* Effect.promise(async () => {
+          await fs.mkdir(decoy, { recursive: true })
+          await Bun.write(path.join(decoy, "sh"), `#!/bin/sh\necho decoy >> ${decoyLog}\nexit 99\n`)
+          await fs.chmod(path.join(decoy, "sh"), 0o755)
+        })
         const out = yield* run(
           ChildProcess.make("echo", ["hi"], {
-            env: { PATH: `${fixtureDir}:${process.env.PATH}` },
+            env: { PATH: `${decoy}:${process.env.PATH}` },
             extendEnv: true,
           }),
         )
         expect(out).toBe("hi")
         expect(yield* lines(bare)).toEqual(["echo hi"])
+        expect(yield* exists(decoyLog)).toBe(false)
       }),
     )
 
-    testEffect(LayerNode.compile(CrossSpawnSpawner.configured({ wrapper: ["no-such-wrapper-12345"] }))).effect(
-      "fails with a spawn error when the wrapper cannot be found",
-      Effect.gen(function* () {
-        const exit = yield* Effect.exit(run(ChildProcess.make("echo", ["hi"])))
-        expect(Exit.isFailure(exit)).toBe(true)
-        if (Exit.isSuccess(exit)) return
-        expect(Cause.hasDies(exit.cause)).toBe(false)
-        const error = Cause.squash(exit.cause)
-        expect(PlatformError.isPlatformError(error) && error.reason._tag).toBe("NotFound")
-        // The message names the wrapper, which is what failed to start.
-        expect(inspect(exit, { depth: Infinity })).toContain("no-such-wrapper-12345 echo hi")
-      }),
-    )
+    test("fails to configure when the wrapper cannot be found", () => {
+      expect(() => CrossSpawnSpawner.configured({ wrapper: ["definitely-not-a-command-xyz"] })).toThrow(
+        'experimental.process.wrapper: wrapper command "definitely-not-a-command-xyz" not found on PATH',
+      )
+      expect(() => CrossSpawnSpawner.configured({ wrapper: [""] })).toThrow(
+        'experimental.process.wrapper: wrapper command "" not found on PATH',
+      )
+    })
 
     const resident = wrap("resident", "--resident")
     resident.fx.live(

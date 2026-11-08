@@ -544,11 +544,8 @@ const makeCrossSpawnSpawner = Effect.fnUntraced(function* (wrapper: ReadonlyArra
 
   // Only the launch uses this command, so a failure to start names the wrapper that failed. Kills and exit errors
   // keep reporting the original, and arguments stay `Redacted` because they move across untouched.
-  const wrapped = (command: ChildProcess.StandardCommand): ChildProcess.StandardCommand => ({
-    ...command,
-    command: wrapper[0],
-    args: [...wrapper.slice(1), command.command, ...command.args],
-  })
+  const wrapped = (command: ChildProcess.StandardCommand) =>
+    ChildProcess.make(wrapper[0], [...wrapper.slice(1), command.command, ...command.args], command.options)
 
   const spawnCommand: (
     command: ChildProcess.Command,
@@ -707,15 +704,24 @@ const layer = (
 
 /**
  * A spawner that starts every command as `wrapper[0] ...wrapper.slice(1) <command> <args>`, so an external tool can
- * sandbox the processes it starts. `wrapper[0]` resolves as a bare command does, through the command's `PATH`.
- * An empty or omitted wrapper spawns commands as written.
+ * sandbox the processes it starts. `wrapper[0]` is resolved once, here, against this process's `PATH`; throws if it
+ * is not found. An empty or omitted wrapper spawns commands as written.
  */
 export function configured(options?: { readonly wrapper?: ReadonlyArray<string> }) {
+  const wrapper = options?.wrapper ?? []
   return makeGlobalNode({
     service: ChildProcessSpawner,
-    layer: layer(options?.wrapper ?? []),
+    layer: layer(wrapper.length === 0 ? wrapper : [resolveWrapper(wrapper[0]), ...wrapper.slice(1)]),
     deps: [filesystem, path],
   })
+}
+
+// A command's own environment, which project config can set, must not be able to put another program first on its
+// `PATH` and so replace the wrapper.
+function resolveWrapper(name: string) {
+  const resolved = name === "" ? null : Bun.which(name)
+  if (resolved) return resolved
+  throw new Error(`experimental.process.wrapper: wrapper command "${name}" not found on PATH`)
 }
 
 export const node = configured()
