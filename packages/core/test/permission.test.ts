@@ -952,8 +952,8 @@ describe("Permission in child sessions", () => {
           { id: "ses_root", agent: "readonly" },
           { id: "ses_child", agent: "general", parentID: "ses_root" },
           { id: "ses_grandchild", agent: "general", parentID: "ses_child" },
-          { id: "ses_other", agent: "general" },
-          // Explicit child rules replace the inherited copy; the parent's own Session rules still apply.
+          { id: "ses_other", agent: "general", permission: [{ action: "shell", resource: "*", effect: "deny" }] },
+          // The child's own Session rules allow everything; its parent's Session deny still wins.
           {
             id: "ses_shell",
             agent: "general",
@@ -962,13 +962,6 @@ describe("Permission in child sessions", () => {
           },
         ],
       })
-      const { db } = yield* Database.Service
-      yield* db
-        .update(SessionTable)
-        .set({ permission: [{ action: "shell", resource: "*", effect: "deny" }] })
-        .where(eq(SessionTable.id, Session.ID.make("ses_other")))
-        .run()
-        .pipe(Effect.orDie)
 
       expect(yield* service.ask(edit("ses_grandchild", "/project/README.md"))).toMatchObject({ effect: "deny" })
       expect(
@@ -982,17 +975,8 @@ describe("Permission in child sessions", () => {
   it.effect("leaves a Session without a parent unchanged", () =>
     Effect.gen(function* () {
       const service = yield* family({
-        agents: {
-          readonly: [
-            { action: "*", resource: "*", effect: "allow" },
-            { action: "edit", resource: "*", effect: "deny" },
-          ],
-          general: [{ action: "*", resource: "*", effect: "allow" }],
-        },
-        sessions: [
-          { id: "ses_parent", agent: "readonly" },
-          { id: "ses_root", agent: "general" },
-        ],
+        agents: { general: [{ action: "*", resource: "*", effect: "allow" }] },
+        sessions: [{ id: "ses_root", agent: "general" }],
       })
 
       expect(yield* service.ask(edit("ses_root", "/project/README.md"))).toMatchObject({ effect: "allow" })
@@ -1018,6 +1002,89 @@ describe("Permission in child sessions", () => {
       expect(yield* service.ask(edit("ses_general", "/project/README.md"))).toMatchObject({ effect: "allow" })
       expect(yield* service.ask(edit("ses_reviewer", "/project/README.md"))).toMatchObject({ effect: "deny" })
       expect(yield* service.list()).toEqual([])
+    }),
+  )
+
+  it.effect("keeps a controller's other denies with the controller", () =>
+    Effect.gen(function* () {
+      const controller: Permission.Ruleset = [
+        { action: "*", resource: "*", effect: "deny" },
+        { action: "subagent", resource: "*", effect: "allow" },
+      ]
+      const service = yield* family({
+        agents: {
+          controller,
+          editless: [...controller, { action: "edit", resource: "*", effect: "deny" }],
+          general: [{ action: "*", resource: "*", effect: "allow" }],
+        },
+        sessions: [
+          { id: "ses_controller", agent: "controller" },
+          { id: "ses_worker", agent: "general", parentID: "ses_controller" },
+          { id: "ses_editless", agent: "editless" },
+          { id: "ses_reader", agent: "general", parentID: "ses_editless" },
+        ],
+      })
+      const read = (sessionID: string) => assertion({ sessionID: Session.ID.make(sessionID) })
+      const shell = (sessionID: string) =>
+        assertion({ sessionID: Session.ID.make(sessionID), action: "shell", resources: ["git status"] })
+
+      expect(yield* service.ask(read("ses_worker"))).toMatchObject({ effect: "allow" })
+      expect(yield* service.ask(shell("ses_worker"))).toMatchObject({ effect: "allow" })
+      // Only the controller's own `edit` rules carry over, so its wildcard deny does not.
+      expect(yield* service.ask(edit("ses_worker", "/project/README.md"))).toMatchObject({ effect: "allow" })
+      expect(yield* service.ask(read("ses_reader"))).toMatchObject({ effect: "allow" })
+      expect(yield* service.ask(shell("ses_reader"))).toMatchObject({ effect: "allow" })
+      expect(yield* service.ask(edit("ses_reader", "/project/README.md"))).toMatchObject({ effect: "deny" })
+    }),
+  )
+
+  it.effect("lets an ancestor's Session rules override its agent's deny", () =>
+    Effect.gen(function* () {
+      const service = yield* family({
+        agents: {
+          readonly: [{ action: "edit", resource: "*", effect: "deny" }],
+          general: [{ action: "*", resource: "*", effect: "allow" }],
+        },
+        sessions: [
+          { id: "ses_parent", agent: "readonly", permission: [{ action: "edit", resource: "*", effect: "allow" }] },
+          { id: "ses_child", agent: "general", parentID: "ses_parent", permission: [] },
+        ],
+      })
+
+      expect(yield* service.ask(edit("ses_parent", "/project/README.md"))).toMatchObject({ effect: "allow" })
+      expect(yield* service.ask(edit("ses_child", "/project/README.md"))).toMatchObject({ effect: "allow" })
+    }),
+  )
+
+  it.effect("denies a child whose ancestor is missing", () =>
+    Effect.gen(function* () {
+      const service = yield* family({
+        agents: { general: [{ action: "*", resource: "*", effect: "allow" }] },
+        sessions: [{ id: "ses_orphan", agent: "general", parentID: "ses_missing" }],
+      })
+
+      const blocked = yield* service.assert(edit("ses_orphan", "/project/README.md")).pipe(Effect.flip)
+      expect(blocked).toBeInstanceOf(Permission.BlockedError)
+      expect(blocked.message).toBe("Permission edit denied: parent Session ses_missing was not found")
+      expect(yield* service.ask(assertion({ sessionID: Session.ID.make("ses_orphan") }))).toMatchObject({
+        effect: "deny",
+      })
+    }),
+  )
+
+  it.effect("denies a Session whose ancestors form a cycle", () =>
+    Effect.gen(function* () {
+      const service = yield* family({
+        agents: { general: [{ action: "*", resource: "*", effect: "allow" }] },
+        sessions: [
+          { id: "ses_a", agent: "general", parentID: "ses_b" },
+          { id: "ses_b", agent: "general", parentID: "ses_a" },
+        ],
+      })
+
+      const blocked = yield* service.assert(edit("ses_a", "/project/README.md")).pipe(Effect.flip)
+      expect(blocked).toBeInstanceOf(Permission.BlockedError)
+      expect(blocked.message).toBe("Permission edit denied: Session ses_a is its own ancestor")
     }),
   )
 })

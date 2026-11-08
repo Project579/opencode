@@ -184,19 +184,37 @@ const layer = Layer.effect(
       return rules.filter((rule) => Wildcard.match(input.action, rule.action))
     }
 
+    // A subagent may not do what an ancestor Session denies, as in v1 (#26597, narrowed by #27201).
+    // Each ancestor contributes its agent's `edit` rules, which carry Plan's restriction, and all of
+    // its own Session rules. Its other agent rules stay with it, so a narrow controller agent can still
+    // delegate to a more capable subagent. Ancestors are checked one at a time, because merging their
+    // rules into the child's would let the child's allows override them; only denies carry over.
+    const ancestorDenial = Effect.fnUntraced(function* (input: AssertInput, parentID: SessionSchema.ID | undefined) {
+      const seen = new Set([input.sessionID])
+      let current = parentID
+      while (current) {
+        if (seen.has(current))
+          return { rules: [], message: `Permission ${input.action} denied: Session ${current} is its own ancestor` }
+        seen.add(current)
+        const ancestor = yield* sessions.get(current)
+        if (!ancestor)
+          return { rules: [], message: `Permission ${input.action} denied: parent Session ${current} was not found` }
+        const agent = yield* agents.resolve(ancestor.agent)
+        const rules = merge(
+          (agent?.permissions ?? []).filter((rule) => rule.action === "edit"),
+          ancestor.permissions ?? [],
+        )
+        if (denied(input, rules)) return { rules }
+        current = ancestor.parentID
+      }
+      return undefined
+    })
+
     const evaluateInput = Effect.fnUntraced(function* (input: AssertInput) {
       const own = yield* configured(input.sessionID, input.agent)
       if (denied(input, own.rules)) return { effect: "deny" as const, rules: own.rules }
-      // A child Session may never do what an ancestor denies under its own agent and Session rules.
-      // Each ancestor is checked separately because merging would let the child's allows override
-      // the ancestor's denies. Only denies carry over; an ancestor's ask or allow leaves the child's
-      // own rules in charge.
-      let parentID = own.parentID
-      while (parentID) {
-        const parent = yield* configured(parentID)
-        if (denied(input, parent.rules)) return { effect: "deny" as const, rules: parent.rules }
-        parentID = parent.parentID
-      }
+      const inherited = yield* ancestorDenial(input, own.parentID)
+      if (inherited) return { effect: "deny" as const, ...inherited }
       const all = [...own.rules, ...(yield* savedRules())]
       const effects = input.resources.map((resource) => evaluate(input.action, resource, all).effect)
       const effect: Permission.Effect = effects.includes("ask") ? "ask" : "allow"
