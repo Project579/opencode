@@ -24,7 +24,7 @@
 
 ## Review Focus
 
-1. `wrapper[0]` is a bare name (`"my-sandbox"`) resolved through `PATH`, not an absolute path → it resolves exactly as a bare command does today (node's own PATH lookup via cross-spawn; `executable()` is only a Windows Store-alias fix). Test in Task 1.
+1. `wrapper[0]` is a bare name (`"my-sandbox"`) resolved through `PATH`, not an absolute path → it resolves exactly as a bare command does today (node's own PATH lookup via cross-spawn; `executable()` is only a Windows Store-alias fix). Test in Task 1. *Superseded by the final review (see the spec's "resolved once, at server start" decision): resolving through the command's `PATH` let repo config swap the wrapper; it is now resolved once against the server's `PATH`.*
 2. A wrapper that stays resident (does not `exec`, like some sandbox launchers) around a long-running process is stopped on timeout → the wrapper and its child both exit, because OpenCode kills the process group. Test in Task 1.
 3. Redacted arguments (`Redacted` args to `ChildProcess.make`) under a wrapper → still passed through unredacted to the child and still redacted in logs/errors. Test in Task 1.
 4. `OPENCODE_PROCESS_WRAPPER='[]'` or unset → identical to no wrapper; `'"x"'`, `'[1]'`, `'not json'` → server start fails naming the variable. Test in Task 3.
