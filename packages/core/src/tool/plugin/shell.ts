@@ -127,7 +127,8 @@ export const Plugin = {
         yield* permission.assert({
           action: name,
           resources: parsed.commands.map((command) => command.resource),
-          save: parsed.commands.map((command) => command.save),
+          // Without a save pattern the prompt offers no "always".
+          save: parsed.unsavable ? undefined : parsed.commands.map((command) => command.save),
           guards: parsed.guards,
           ...Permission.invocation(context),
         })

@@ -22,6 +22,11 @@ export type Result = {
    * commands above are what a user approves. Absent when no command runs another.
    */
   guards?: string[]
+  /**
+   * Set when a command's only save would be its exact text holding a * or ?, which would act as a wildcard. The request
+   * then offers no "always".
+   */
+  unsavable?: true
 }
 
 const ARITY: Record<string, number> = {
@@ -287,25 +292,25 @@ export function scan(command: string, shell: string, cwd: string): Effect.Effect
                 const separator = /^\s+(?:`(?:\r\n|\r|\n)\s*)?/.exec(item.resource.slice(boundary))?.[0]
                 return `${item.resource.slice(0, boundary)}${separator ?? " "}*`
               })()
-      const wrapped = powershell
-        ? undefined
-        : unwrap(
-            item.redirectWordCount === undefined ? item.words : item.words.slice(0, item.redirectWordCount),
-            words,
-            dialect,
-          )
+      // Redirect targets are not words, so a redirect between a wrapper and its command does not hide the command.
+      const wrapped = powershell ? undefined : unwrap(item.words, item.rawWords, dialect)
       // A wrapper saves itself with what it runs, never `<wrapper> *`. When what it runs cannot be matched by rules,
-      // or the pattern would hold a * or ? wildcard, it saves the exact command.
-      const pattern = wrapped?.prefix && `${head}${wrapped.prefix.join(" ")}`
+      // a redirect splits its words, or the pattern would hold a * or ? wildcard, it saves the exact command.
+      const pattern = item.redirectWordCount === undefined && wrapped?.prefix && `${head}${wrapped.prefix.join(" ")}`
+      const exact = wrapped !== undefined && !(pattern && !/[*?]/.test(pattern))
+      // A * or ? in an exact save would act as a wildcard, so the request offers no "always" instead.
+      if (exact && /[*?]/.test(item.resource)) output.unsavable = true
       output.commands.push({
         resource: item.resource,
-        save: !wrapped ? save : pattern && !/[*?]/.test(pattern) ? `${pattern} *` : item.resource,
+        save: !wrapped ? save : exact ? item.resource : `${pattern} *`,
       })
       if (powershell) continue
       // Leading assignments and redirects are part of the resource, so rules for the command itself need a guard
       // without them; a wrapper adds a guard for each command it runs.
       const guards = [
-        ...(item.commandOffset !== undefined && !ShellScan.declarations.has(words[0] ?? "") ? [words.join(" ")] : []),
+        ...(item.commandOffset !== undefined && !ShellScan.declarations.has(words[0] ?? "")
+          ? [item.rawWords.join(" ")]
+          : []),
         ...(wrapped?.guards ?? []),
       ]
       if (guards.length > 0) output.guards = [...(output.guards ?? []), ...guards]
@@ -721,10 +726,7 @@ function script(text: string, isStatic: boolean, dialect: ShellScan.Dialect, dep
   if (scanned.kind === "opaque") return []
   return scanned.commands
     .filter((item) => !item.declaration)
-    .flatMap((item) => {
-      const end = item.redirectWordCount ?? item.words.length
-      return command(item.words.slice(0, end), item.rawWords.slice(0, end), dialect, depth + 1).guards
-    })
+    .flatMap((item) => command(item.words, item.rawWords, dialect, depth + 1).guards)
 }
 
 /** The index of the script operand when a shell is invoked with `-c`. */

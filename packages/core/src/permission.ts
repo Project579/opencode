@@ -36,8 +36,10 @@ export interface AssertInput extends Omit<Request, "id" | "message"> {
   readonly agent?: Agent.ID
   /**
    * Resources checked only so rules for them hold, such as a command a shell wrapper runs. A guard is never required
-   * to be allowed, never saved and never shown: a deny rule for it denies, and an ask rule for it asks only when it
-   * takes precedence over every rule allowing the resources. Saved approvals come last, so "always" settles a guard.
+   * to be allowed, never saved and never shown. A configured rule that denies it denies the request whatever the
+   * rule order, as for resources, so a catch-all deny also denies every wrapped command; an order-aware deny would let
+   * `rm * deny` before `timeout * allow` through. An ask rule for a guard asks only when it takes precedence over every
+   * rule allowing the resources. Saved approvals come last, so "always" settles a guard's ask but never its deny.
    */
   readonly guards?: ReadonlyArray<string>
 }

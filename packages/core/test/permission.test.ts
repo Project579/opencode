@@ -873,7 +873,7 @@ describe("shell rules through wrapper commands", () => {
       return assertion({
         action: "shell",
         resources: parsed.commands.map((item) => item.resource),
-        save: parsed.commands.map((item) => item.save),
+        save: parsed.unsavable ? undefined : parsed.commands.map((item) => item.save),
         guards: parsed.guards,
       })
     })
@@ -902,13 +902,18 @@ describe("shell rules through wrapper commands", () => {
     "sh -c 'rm x'",
     "bash -lc 'git status && rm x'",
     "eval 'rm x'",
-    "find . -name x -exec rm {} ;",
+    "find . -name x -exec rm {} \\;",
+    "find . -name x -exec rm {} +",
     "sudo env FOO=1 bash -c 'rm x'",
     "sudo FOO=1 rm x",
     "sudo env FOO=1 rm x",
     "2>/dev/null rm x",
     "> out rm x",
     "2>/dev/null env rm x",
+    "env 2>/dev/null rm x",
+    "timeout 5 >/dev/null rm x",
+    "sudo 2>&1 rm x",
+    "xargs >out rm",
   ])
     it.live(`a deny for the wrapped command applies to ${command}`, () =>
       Effect.gen(function* () {
@@ -961,11 +966,12 @@ describe("shell rules through wrapper commands", () => {
         { action: "shell", resource: "*", effect: "ask" },
         { action: "shell", resource: "git status *", effect: "allow" },
       ])
+      const service = yield* Permission.Service
       expect((yield* ask("git status")).effect).toBe("allow")
       for (const command of ["timeout 10 git status", "FOO=bar git status", "env git status"]) {
         const result = yield* ask(command)
         expect(result.effect, command).toBe("ask")
-        yield* (yield* Permission.Service).reply({ requestID: result.id, reply: "once" })
+        yield* service.reply({ requestID: result.id, reply: "once" })
       }
     }),
   )
@@ -981,7 +987,7 @@ describe("shell rules through wrapper commands", () => {
         ["FOO=1 env rm x", "FOO=1 env rm *"],
         ["sudo FOO=1 rm x", "sudo FOO=1 rm *"],
         ["bash -c 'rm x'", "bash -c 'rm x'"],
-        ["env X=* rm x", "env X=* rm x"],
+        ["timeout 5 >/dev/null rm x", "timeout 5 >/dev/null rm x"],
       ] as const) {
         const input = yield* request(command)
         expect(input.save, command).toEqual([grant])
@@ -996,6 +1002,49 @@ describe("shell rules through wrapper commands", () => {
       expect((yield* saved.list({ projectID: Project.ID.global })).map((rule) => rule.resource)).not.toContain(
         "git status *",
       )
+    }),
+  )
+
+  it.live("offers no always when the exact save would hold a wildcard from the command", () =>
+    Effect.gen(function* () {
+      yield* setup([{ action: "shell", resource: "*", effect: "ask" }])
+      const service = yield* Permission.Service
+      const saved = yield* PermissionSaved.Service
+      for (const command of [
+        "env X=* rm x",
+        "find . -name '*.log' -exec rm {} \\;",
+        "bash -c 'rm *.tmp'",
+        "bash -c 'rm ?'",
+      ]) {
+        const input = yield* request(command)
+        expect(input.save, command).toBeUndefined()
+        const first = yield* service.ask(input)
+        expect(first.effect, command).toBe("ask")
+        expect((yield* service.list())[0]?.save, command).toBeUndefined()
+        yield* service.reply({ requestID: first.id, reply: "always" })
+        const again = yield* ask(command)
+        expect(again.effect, command).toBe("ask")
+        yield* service.reply({ requestID: again.id, reply: "once" })
+      }
+      expect(yield* saved.list({ projectID: Project.ID.global })).toEqual([])
+      // A wildcard only in what the wrapper runs, past the saved prefix, keeps "always".
+      expect((yield* request("timeout 5 rm *.tmp")).save).toEqual(["timeout 5 rm *"])
+    }),
+  )
+
+  it.live("a configured deny for a guard applies whatever its order", () =>
+    Effect.gen(function* () {
+      yield* setup([
+        { action: "shell", resource: "*", effect: "deny" },
+        { action: "shell", resource: "timeout *", effect: "allow" },
+      ])
+      expect((yield* ask("timeout 5 make")).effect).toBe("deny")
+      yield* setup([
+        { action: "shell", resource: "rm *", effect: "deny" },
+        { action: "shell", resource: "timeout *", effect: "allow" },
+      ])
+      expect((yield* ask("timeout 5 rm x")).effect).toBe("deny")
+      expect((yield* ask("timeout 5 make")).effect).toBe("allow")
     }),
   )
 
