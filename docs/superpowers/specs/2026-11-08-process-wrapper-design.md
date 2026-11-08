@@ -29,7 +29,7 @@ The owner wants one generic way to route all of them through a wrapper of the us
 
 - Any behaviour change when the option is unset.
 - Naming or assuming a specific sandbox tool anywhere in core.
-- Wrapping the wrapper itself (infinite or double wrapping).
+- Wrapping a spawn more than once: the prefix is applied once per spawn (the spawner never re-enters itself for a segment); double wrapping through `SHELL` is a docs matter.
 - Breaking process-group termination: OpenCode kills the whole process group, so a wrapper that started a new session would orphan children.
 - A repo's `opencode.json` being able to remove or change the wrapper (see Decided).
 
@@ -54,7 +54,6 @@ The owner wants one generic way to route all of them through a wrapper of the us
   3. One standard replacement in `server/src/routes.ts`: `CrossSpawnSpawner.node.replace(CrossSpawnSpawner.configured({ wrapper: options.experimental?.process?.wrapper }))`. Embedders that replace the spawner themselves (workerd, `server/src/workerd.ts:84`) keep working because their replacement is applied after the standard ones.
   4. The CLI maps an environment variable, `OPENCODE_PROCESS_WRAPPER` (a JSON array of strings), to that option in `cli/src/server-process.ts`, next to `gitbash`. Invalid JSON or a non-array fails at server start with a clear error rather than running unwrapped.
 - **A repo cannot turn it off.** Project `opencode.json` never reaches server options, so the wrapper holds regardless of repo config. This matches the owner's sandbox test session, whose spec requires the sandbox to protect itself from repo config.
-- **No double wrap:** skip the prefix when the command is already the wrapper's own executable (`command === wrapper[0]`).
 - **One exemption:** the macOS managed-policy read (`plutil` in `core/src/config.ts:253`) is never wrapped, because a sandbox denial there would silently drop managed policy. Implement as an explicit bypass on that one call (for example a context reference or a spawn option), not a name check.
 - **Docs, not code, for wrapper behaviour:** document that the wrapper must `exec` its child (no extra layer that swallows signals), must not start a new session or process group (for example `bwrap --new-session`), and that `SHELL` should be plain bash when the wrapper is set, or shell commands get wrapped twice. With `SHELL` plain, the interactive terminal panes (out of scope) run unwrapped like a normal terminal on that machine; the owner considers that a positive (2026-11-08): those panes are the user's own shells, the agent has no tool that types into them, and the agent's commands still go through the wrapper.
 
@@ -70,10 +69,10 @@ The owner wants one generic way to route all of them through a wrapper of the us
 
 ## Testing
 
-- Unit (util): with a wrapper, a spawned command's argv is `[...wrapper, command, ...args]` with cwd and env unchanged; without, identical to today; the `command === wrapper[0]` skip; the bypass.
+- Unit (util): with a wrapper, a spawned command's argv is `[...wrapper, command, ...args]` with cwd and env unchanged; without, identical to today; the bypass.
 - Server-level: with the option set, a stdio MCP server started by OpenCode runs under a test wrapper that records its argv (a small script), proving the MCP path goes through the shared spawner; same for one formatter and the shell tool.
 - Owner's acceptance test, run live by the sandbox test session: wrapper = a nono profile without the Claude config folder; the MCP server cannot list it; unset → unchanged.
-- CLI: `OPENCODE_PROCESS_WRAPPER` valid JSON reaches the option; invalid JSON fails at start.
+- CLI: the parser accepts a JSON array of strings and rejects anything else; the wiring into the server options is typechecked (as for `gitbash`).
 
 ## Left to the builder
 
