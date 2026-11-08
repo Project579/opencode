@@ -135,6 +135,9 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           windows: {
             gitbash: process.env.OPENCODE_GIT_BASH_PATH,
           },
+          experimental: {
+            process: { wrapper: processWrapper(process.env.OPENCODE_PROCESS_WRAPPER) },
+          },
           fs: {
             filewatcher: !truthy(process.env.OPENCODE_FILEWATCHER_DISABLE ?? process.env.OPENCODE_DISABLE_FILEWATCHER),
             fff:
@@ -218,6 +221,13 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
 
 function serviceURL(hostname: string, port: number) {
   return `http://${hostname.includes(":") ? `[${hostname}]` : hostname}:${port}`
+}
+
+export function processWrapper(raw: string | undefined) {
+  if (!raw) return undefined
+  const wrapper = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Array(Schema.String)))(raw)
+  if (Option.isNone(wrapper)) throw new Error("OPENCODE_PROCESS_WRAPPER must be a JSON array of strings")
+  return wrapper.value.length === 0 ? undefined : wrapper.value
 }
 
 function truthy(value?: string) {

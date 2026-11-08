@@ -748,46 +748,58 @@ The opencode CLI takes the following global flags.
 
 OpenCode can be configured using environment variables.
 
-| Variable                              | Type    | Description                                                                  |
-| ------------------------------------- | ------- | ---------------------------------------------------------------------------- |
-| `OPENCODE_GIT_BASH_PATH`              | string  | Path to Git Bash executable on Windows                                       |
-| `OPENCODE_CONFIG`                     | string  | Path to config file                                                          |
-| `OPENCODE_TUI_CONFIG`                 | string  | Path to TUI config file                                                      |
-| `OPENCODE_CONFIG_DIR`                 | string  | Path to config directory                                                     |
-| `OPENCODE_CONFIG_CONTENT`             | string  | Inline json config content                                                   |
-| `OPENCODE_DISABLE_AUTOUPDATE`         | boolean | Disable automatic update checks                                              |
-| `OPENCODE_DISABLE_PRUNE`              | boolean | Disable pruning of old data                                                  |
-| `OPENCODE_DISABLE_TERMINAL_TITLE`     | boolean | Disable automatic terminal title updates                                     |
-| `OPENCODE_PERMISSION`                 | string  | Inlined json permissions config                                              |
-| `OPENCODE_DISABLE_DEFAULT_PLUGINS`    | boolean | Disable default plugins                                                      |
-| `OPENCODE_DISABLE_LSP_DOWNLOAD`       | boolean | Disable automatic LSP server downloads                                       |
-| `OPENCODE_ENABLE_EXPERIMENTAL_MODELS` | boolean | Enable experimental models                                                   |
-| `OPENCODE_DISABLE_AUTOCOMPACT`        | boolean | Disable automatic context compaction                                         |
-| `OPENCODE_DISABLE_CLAUDE_CODE`        | boolean | Disable reading from `.claude` (prompt + skills)                             |
-| `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` | boolean | Disable reading `~/.claude/CLAUDE.md`                                        |
-| `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` | boolean | Disable loading `.claude/skills`                                             |
-| `OPENCODE_DISABLE_MODELS_FETCH`       | boolean | Disable fetching models from remote sources                                  |
-| `OPENCODE_DISABLE_MOUSE`              | boolean | Disable mouse capture in the TUI                                             |
-| `OPENCODE_FAKE_VCS`                   | string  | Fake VCS provider for testing purposes                                       |
-| `OPENCODE_CLIENT`                     | string  | Client identifier (defaults to `cli`)                                        |
-| `OPENCODE_ENABLE_EXA`                 | boolean | Enable Exa web search tools                                                  |
-| `OPENCODE_ENABLE_PARALLEL`            | boolean | Enable Parallel web search tools                                             |
-| `OPENCODE_SERVER_PASSWORD`            | string  | Enable basic auth for `serve`/`web`                                          |
-| `OPENCODE_SERVER_USERNAME`            | string  | Override basic auth username (default `opencode`)                            |
-| `OPENCODE_MODELS_URL`                 | string  | Custom URL for fetching models configuration                                 |
-| `OPENCODE_MODELS_PATH`                | string  | Load the model catalog from a local JSON file                                |
-| `OPENCODE_DB`                         | string  | Database path; relative paths resolve under the data directory               |
-| `OPENCODE_PURE`                       | boolean | Run without external plugins, like `--pure`                                  |
-| `OPENCODE_DISABLE_PROJECT_CONFIG`     | boolean | Disable project configuration and project instruction files                  |
-| `OPENCODE_DISABLE_EXTERNAL_SKILLS`    | boolean | Disable skill discovery in `.claude` and `.agents` directories               |
-| `OPENCODE_DISABLE_EMBEDDED_WEB_UI`    | boolean | Disable the bundled web UI and use the remote UI fallback                    |
-| `OPENCODE_DISABLE_FFF`                | boolean | Use ripgrep instead of the native file finder; enabled by default on Windows |
-| `OPENCODE_ENABLE_QUESTION_TOOL`       | boolean | Enable the question tool for clients other than the CLI, app, and desktop    |
-| `OPENCODE_ALWAYS_NOTIFY_UPDATE`       | boolean | Show update notifications even without a newer version                       |
-| `OPENCODE_SHOW_TTFD`                  | boolean | Show time-to-first-delta timing                                              |
-| `OPENCODE_LOG_LEVEL`                  | string  | Log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`                               |
-| `OPENCODE_PRINT_LOGS`                 | string  | Set to `1` to also print logs to stderr                                      |
-| `OPENCODE_AUTO_HEAP_SNAPSHOT`         | boolean | Capture a heap snapshot when memory usage exceeds 2 GiB                      |
+| Variable                              | Type    | Description                                                                                   |
+| ------------------------------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `OPENCODE_GIT_BASH_PATH`              | string  | Path to Git Bash executable on Windows                                                        |
+| `OPENCODE_CONFIG`                     | string  | Path to config file                                                                           |
+| `OPENCODE_TUI_CONFIG`                 | string  | Path to TUI config file                                                                       |
+| `OPENCODE_CONFIG_DIR`                 | string  | Path to config directory                                                                      |
+| `OPENCODE_CONFIG_CONTENT`             | string  | Inline json config content                                                                    |
+| `OPENCODE_DISABLE_AUTOUPDATE`         | boolean | Disable automatic update checks                                                               |
+| `OPENCODE_DISABLE_PRUNE`              | boolean | Disable pruning of old data                                                                   |
+| `OPENCODE_DISABLE_TERMINAL_TITLE`     | boolean | Disable automatic terminal title updates                                                      |
+| `OPENCODE_PERMISSION`                 | string  | Inlined json permissions config                                                               |
+| `OPENCODE_DISABLE_DEFAULT_PLUGINS`    | boolean | Disable default plugins                                                                       |
+| `OPENCODE_DISABLE_LSP_DOWNLOAD`       | boolean | Disable automatic LSP server downloads                                                        |
+| `OPENCODE_ENABLE_EXPERIMENTAL_MODELS` | boolean | Enable experimental models                                                                    |
+| `OPENCODE_DISABLE_AUTOCOMPACT`        | boolean | Disable automatic context compaction                                                          |
+| `OPENCODE_DISABLE_CLAUDE_CODE`        | boolean | Disable reading from `.claude` (prompt + skills)                                              |
+| `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` | boolean | Disable reading `~/.claude/CLAUDE.md`                                                         |
+| `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` | boolean | Disable loading `.claude/skills`                                                              |
+| `OPENCODE_DISABLE_MODELS_FETCH`       | boolean | Disable fetching models from remote sources                                                   |
+| `OPENCODE_DISABLE_MOUSE`              | boolean | Disable mouse capture in the TUI                                                              |
+| `OPENCODE_FAKE_VCS`                   | string  | Fake VCS provider for testing purposes                                                        |
+| `OPENCODE_CLIENT`                     | string  | Client identifier (defaults to `cli`)                                                         |
+| `OPENCODE_ENABLE_EXA`                 | boolean | Enable Exa web search tools                                                                   |
+| `OPENCODE_ENABLE_PARALLEL`            | boolean | Enable Parallel web search tools                                                              |
+| `OPENCODE_SERVER_PASSWORD`            | string  | Enable basic auth for `serve`/`web`                                                           |
+| `OPENCODE_SERVER_USERNAME`            | string  | Override basic auth username (default `opencode`)                                             |
+| `OPENCODE_MODELS_URL`                 | string  | Custom URL for fetching models configuration                                                  |
+| `OPENCODE_MODELS_PATH`                | string  | Load the model catalog from a local JSON file                                                 |
+| `OPENCODE_DB`                         | string  | Database path; relative paths resolve under the data directory                                |
+| `OPENCODE_PURE`                       | boolean | Run without external plugins, like `--pure`                                                   |
+| `OPENCODE_DISABLE_PROJECT_CONFIG`     | boolean | Disable project configuration and project instruction files                                   |
+| `OPENCODE_DISABLE_EXTERNAL_SKILLS`    | boolean | Disable skill discovery in `.claude` and `.agents` directories                                |
+| `OPENCODE_DISABLE_EMBEDDED_WEB_UI`    | boolean | Disable the bundled web UI and use the remote UI fallback                                     |
+| `OPENCODE_DISABLE_FFF`                | boolean | Use ripgrep instead of the native file finder; enabled by default on Windows                  |
+| `OPENCODE_ENABLE_QUESTION_TOOL`       | boolean | Enable the question tool for clients other than the CLI, app, and desktop                     |
+| `OPENCODE_ALWAYS_NOTIFY_UPDATE`       | boolean | Show update notifications even without a newer version                                        |
+| `OPENCODE_SHOW_TTFD`                  | boolean | Show time-to-first-delta timing                                                               |
+| `OPENCODE_LOG_LEVEL`                  | string  | Log level: `DEBUG`, `INFO`, `WARN`, or `ERROR`                                                |
+| `OPENCODE_PRINT_LOGS`                 | string  | Set to `1` to also print logs to stderr                                                       |
+| `OPENCODE_AUTO_HEAP_SNAPSHOT`         | boolean | Capture a heap snapshot when memory usage exceeds 2 GiB                                       |
+| `OPENCODE_PROCESS_WRAPPER`            | string  | JSON array of strings; every process the server starts runs as `<wrapper…> <command> <args…>` |
+
+### Process wrapper
+
+`OPENCODE_PROCESS_WRAPPER` plugs an external sandbox into the server. For example, `OPENCODE_PROCESS_WRAPPER='["sandbox-tool","--"]'` runs every process the server starts as `sandbox-tool -- <command> <args…>`. Unset, empty, or `[]` changes nothing, and any other value that is not a JSON array of strings stops the server from starting.
+
+- The server reads it once at start, like the other server variables. Set it where the server starts, such as the service unit or the login environment for the desktop app. An already-running server keeps its own value.
+- The wrapper must `exec` its command and must not start a new session or process group, or OpenCode cannot stop the command on timeout or cancel.
+- Keep `SHELL` plain while the wrapper is set, or shell commands are wrapped twice. Interactive terminal panes then run unwrapped, as your own terminal does.
+- A repo `opencode.json` cannot change it. It does not apply to interactive terminals or the Claude Agent CLI.
+- A command started with `shell: true` (only the Windows worktree start command) joins the wrapper arguments into a shell command line unquoted, so wrapper arguments containing spaces are split.
+- Tested on Linux. On Windows it applies the same way but is untested.
 
 ---
 
