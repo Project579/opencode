@@ -11,7 +11,10 @@ import { Session } from "@opencode/core/session"
 import type { PermissionDomain } from "@opencode/plugin/promise/permission"
 import { SessionMessage } from "@opencode/schema/session-message"
 import type { Info } from "@opencode/schema/tool"
+import { Config } from "@opencode/core/config"
 import { Flag } from "@opencode/core/flag"
+import { Document, Info as ConfigInfo } from "@opencode/schema/config"
+import { ConfigExperimental } from "@opencode/schema/config/experimental"
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
 import { testEffect } from "../lib/effect"
 import { makePluginTestLayer } from "./fixture"
@@ -181,6 +184,32 @@ it.live("with the plugin_tool_permission flag off, tools from installed plugins 
     expect(asserted).toEqual([])
     expect(floored).toEqual([])
     expect(ran).toEqual(["lookup", "blocked"])
+  }),
+)
+
+// A test app runs on an unknown channel, so only `experimental.plugin_tool_permission` in config can turn the flag on.
+const configured = testEffect(
+  makePluginTestLayer(
+    permission,
+    undefined,
+    Config.testLayer([
+      new Document({
+        type: "document",
+        info: new ConfigInfo({ experimental: new ConfigExperimental.Info({ plugin_tool_permission: true }) }),
+      }),
+    ]),
+  ),
+)
+
+configured.live("the flag turns on from experimental.plugin_tool_permission in config", () =>
+  Effect.gen(function* () {
+    const ran: string[] = []
+    const host = yield* PluginHost.make(yield* Plugin.Service, "installed", { type: "package", target: "installed" })
+    yield* host.tool.transform((editor) => editor.add(echo("lookup", ran, "docs")))
+
+    asserted.length = 0
+    expect(Exit.isSuccess(yield* run("docs_lookup"))).toBe(true)
+    expect(asserted.map((input) => input.action)).toEqual(["docs_lookup"])
   }),
 )
 

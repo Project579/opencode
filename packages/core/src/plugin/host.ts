@@ -125,12 +125,14 @@ export const make = Effect.fn("PluginHost.make")(function* (
     Effect.provideContext(yield* Effect.context<never>()),
   )
 
-  // Built-in tools check permission themselves. A tool an installed plugin adds may not, so the user's rule for its
-  // name is applied before it runs, the way MCP tools apply theirs. Updates are left alone: a plugin that edits or
+  // Built-in tools check permission themselves. With the `plugin_tool_permission` flag on, a tool an installed plugin
+  // adds may not, so the user's rule for its name is applied before it runs, the way MCP tools apply theirs. Updates are left alone: a plugin that edits or
   // wraps an existing tool keeps that tool's own, finer check, which a whole-tool check would override.
   const authorized = (editor: Tool.Editor): Tool.Editor => ({
     ...editor,
     add: (tool) =>
+      // The registered tool is a spread copy, so a class-based tool's getters and inherited members are lost even with
+      // the flag off; the flag can only be read when a call runs, not when the tool is added.
       editor.add({
         ...tool,
         execute: (input, context) =>
