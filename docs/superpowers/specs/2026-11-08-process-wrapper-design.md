@@ -56,7 +56,7 @@ The owner wants one generic way to route all of them through a wrapper of the us
 - **A repo cannot turn it off.** Project `opencode.json` never reaches server options, so the wrapper holds regardless of repo config. This matches the owner's sandbox test session, whose spec requires the sandbox to protect itself from repo config.
 - **No double wrap:** skip the prefix when the command is already the wrapper's own executable (`command === wrapper[0]`).
 - **One exemption:** the macOS managed-policy read (`plutil` in `core/src/config.ts:253`) is never wrapped, because a sandbox denial there would silently drop managed policy. Implement as an explicit bypass on that one call (for example a context reference or a spawn option), not a name check.
-- **Docs, not code, for wrapper behaviour:** document that the wrapper must `exec` its child (no extra layer that swallows signals), must not start a new session or process group (for example `bwrap --new-session`), and that `SHELL` should be plain bash when the wrapper is set, or shell commands get wrapped twice.
+- **Docs, not code, for wrapper behaviour:** document that the wrapper must `exec` its child (no extra layer that swallows signals), must not start a new session or process group (for example `bwrap --new-session`), and that `SHELL` should be plain bash when the wrapper is set, or shell commands get wrapped twice. With `SHELL` plain, the interactive terminal panes (out of scope) run unwrapped like a normal terminal on that machine; the owner considers that a positive (2026-11-08): those panes are the user's own shells, the agent has no tool that types into them, and the agent's commands still go through the wrapper.
 
 ## Facts the builder check confirmed (2026-11-08, origin/dev caf8d6a554)
 
