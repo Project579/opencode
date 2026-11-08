@@ -130,6 +130,7 @@ export const Plugin = {
           // Without a save pattern the prompt offers no "always".
           save: parsed.unsavable ? undefined : parsed.commands.map((command) => command.save),
           guards: parsed.guards,
+          opaque: parsed.opaque,
           ...Permission.invocation(context),
         })
       // Approval can outlive the directory, so validate immediately before spawning.

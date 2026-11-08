@@ -148,7 +148,7 @@ describe("native shell syntax compatibility", () => {
         { resource: "echo started", save: "echo *" },
       ],
       directories: [],
-      guards: ["sleep 1"],
+      guards: ["echo ${(P)f}", "sleep 1"],
     })
 
     for (const unsafe of [

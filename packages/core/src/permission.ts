@@ -42,6 +42,11 @@ export interface AssertInput extends Omit<Request, "id" | "message"> {
    * rule allowing the resources. Saved approvals come last, so "always" settles a guard's ask but never its deny.
    */
   readonly guards?: ReadonlyArray<string>
+  /**
+   * The request runs something no rule can match, such as a shell script built at run time. Unless a configured deny
+   * applies, it asks even when every rule allows it; only unattended rules or a permission hook can settle it.
+   */
+  readonly opaque?: true
 }
 
 /** The requester fields of a permission request made by a tool call. */
@@ -135,6 +140,7 @@ interface Pending {
   readonly request: Request
   readonly agent?: Agent.ID
   readonly guards?: ReadonlyArray<string>
+  readonly opaque?: true
   readonly deferred: Deferred.Deferred<void, DeclinedError | CorrectedError>
 }
 
@@ -211,7 +217,8 @@ const layer = Layer.effect(
       if (denied(input, rules)) return { effect: "deny" as const, rules }
       const all = [...rules, ...(yield* savedRules())]
       const effects = input.resources.map((resource) => evaluate(input.action, resource, all).effect)
-      const effect: Permission.Effect = effects.includes("ask") || guardAsks(input, all) ? "ask" : "allow"
+      const effect: Permission.Effect =
+        input.opaque || effects.includes("ask") || guardAsks(input, all) ? "ask" : "allow"
       const event = yield* hooks.trigger("permission", "evaluate", {
         sessionID: input.sessionID,
         agent: input.agent,
@@ -253,11 +260,11 @@ const layer = Layer.effect(
       }
     }
 
-    const create = (request: Request, agent?: Agent.ID, guards?: ReadonlyArray<string>) =>
+    const create = (request: Request, input: AssertInput) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
           const deferred = yield* Deferred.make<void, DeclinedError | CorrectedError>()
-          const item = { request, agent, guards, deferred }
+          const item = { request, agent: input.agent, guards: input.guards, opaque: input.opaque, deferred }
           if (closed) {
             yield* Deferred.fail(deferred, new DeclinedError())
             return item
@@ -276,7 +283,7 @@ const layer = Layer.effect(
       if (closed) return { id: input.id ?? ID.create(), effect: "deny" as const }
       const result = yield* evaluateInput(input)
       const value = request(input, result.message)
-      if (result.effect === "ask") yield* create(value, input.agent, input.guards)
+      if (result.effect === "ask") yield* create(value, input)
       return { id: value.id, effect: result.effect }
     })
 
@@ -295,7 +302,7 @@ const layer = Layer.effect(
               })
             }
             if (result.effect === "allow") return
-            const item = yield* create(request(input, result.message), input.agent, input.guards)
+            const item = yield* create(request(input, result.message), input)
             return yield* restore(Deferred.await(item.deferred)).pipe(
               // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
               // must not convert a user's decline into model-facing tool output. The decline
@@ -376,9 +383,12 @@ const layer = Layer.effect(
           if (input.reply !== "always" || !existing.request.save?.length) return
 
           for (const [id, item] of pending) {
-            const result = yield* evaluateInput({ ...item.request, agent: item.agent, guards: item.guards }).pipe(
-              Effect.catchTag("Session.NotFoundError", () => Effect.undefined),
-            )
+            const result = yield* evaluateInput({
+              ...item.request,
+              agent: item.agent,
+              guards: item.guards,
+              opaque: item.opaque,
+            }).pipe(Effect.catchTag("Session.NotFoundError", () => Effect.undefined))
             if (result?.effect !== "allow") continue
             yield* bus.publish(Permission.Event.Replied, {
               sessionID: item.request.sessionID,

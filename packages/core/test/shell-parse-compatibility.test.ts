@@ -90,14 +90,24 @@ const compatibilityCases: Array<[string, string, Record<string, string>, ShellPa
       {},
       { commands: [], directories: ["$HOME", path.join(os.homedir(), "outside")] },
     ],
-    ["bash", 'g""it status', {}, { commands: [{ resource: 'g""it status', save: 'g""it *' }], directories: [] }],
+    [
+      "bash",
+      'g""it status',
+      {},
+      { commands: [{ resource: 'g""it status', save: 'g""it *' }], directories: [], guards: ["git status"] },
+    ],
     [
       "bash",
       'npm "run" test',
       {},
-      { commands: [{ resource: 'npm "run" test', save: 'npm "run" *' }], directories: [] },
+      { commands: [{ resource: 'npm "run" test', save: 'npm "run" *' }], directories: [], guards: ["npm run test"] },
     ],
-    ["bash", "git '*'", {}, { commands: [{ resource: "git '*'", save: "git '*' *" }], directories: [] }],
+    [
+      "bash",
+      "git '*'",
+      {},
+      { commands: [{ resource: "git '*'", save: "git '*' *" }], directories: [], guards: ["git *"] },
+    ],
     [
       "bash",
       "FOO=bar git status",
