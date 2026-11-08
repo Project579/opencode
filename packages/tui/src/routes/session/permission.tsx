@@ -436,6 +436,24 @@ export function SessionQuestion<const T extends Record<string, string>>(props: Q
   const options = () => <QuestionOptions question={props} id={id()} keys={keys} store={store} setStore={setStore} />
   useRenderer()
 
+  // Ctrl+C stays with the prompt even when a plugin replaces the options row, so it never exits the app and leaves
+  // the request pending.
+  Keymap.createLayer(() => ({
+    mode: "base",
+    commands: props.escapeKey
+      ? [
+          {
+            id: "app.exit",
+            title: "Reject permission",
+            group: props.group ?? "Permission",
+            bind: false as const,
+            run: () => dismissQuestion(props, store, setStore),
+          },
+        ]
+      : [],
+    bindings: props.escapeKey ? ["app.exit"] : [],
+  }))
+
   const content = () => (
     <box
       id={id()}
@@ -506,7 +524,20 @@ export function SessionQuestion<const T extends Record<string, string>>(props: Q
   )
 }
 
+function dismissQuestion<const T extends Record<string, string>>(
+  question: QuestionProps<T>,
+  store: { expanded: boolean },
+  setStore: SetStoreFunction<{ selected: keyof T; expanded: boolean }>,
+) {
+  if (store.expanded) {
+    setStore("expanded", false)
+    return
+  }
+  if (question.escapeKey) question.onSelect(question.escapeKey)
+}
+
 // The options row and the keys that drive it, kept together so a plugin replacing the row removes its keymap too.
+// Ctrl+C is the exception: `SessionQuestion` keeps it so a replaced row cannot exit the app.
 function QuestionOptions<const T extends Record<string, string>>(props: {
   question: QuestionProps<T>
   id: string
@@ -518,28 +549,11 @@ function QuestionOptions<const T extends Record<string, string>>(props: {
   const shortcuts = Keymap.useShortcuts()
   const group = () => props.question.group ?? "Permission"
   const hint = createMemo(() => (props.store.expanded ? "minimize" : "fullscreen"))
-  const dismiss = () => {
-    if (props.store.expanded) {
-      props.setStore("expanded", false)
-      return
-    }
-    if (props.question.escapeKey) props.question.onSelect(props.question.escapeKey)
-  }
+  const dismiss = () => dismissQuestion(props.question, props.store, props.setStore)
 
   Keymap.createLayer(() => ({
     mode: "base",
     commands: [
-      ...(props.question.escapeKey
-        ? [
-            {
-              id: "app.exit",
-              title: "Reject permission",
-              group: group(),
-              bind: false as const,
-              run: dismiss,
-            },
-          ]
-        : []),
       ...(props.question.fullscreen
         ? [
             {
@@ -583,10 +597,7 @@ function QuestionOptions<const T extends Record<string, string>>(props: {
         ? [{ bind: "escape", title: "Reject permission", group: group(), run: dismiss }]
         : []),
     ],
-    bindings: [
-      ...(props.question.escapeKey ? ["app.exit"] : []),
-      ...(props.question.fullscreen ? ["permission.prompt.fullscreen"] : []),
-    ],
+    bindings: props.question.fullscreen ? ["permission.prompt.fullscreen"] : [],
   }))
 
   return (

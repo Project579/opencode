@@ -199,9 +199,10 @@ export interface SlotMap {
   /**
    * Experimental: may change without compatibility guarantees. The choices row of a session's permission prompt and
    * the keys that drive it. The request's header and body stay visible around it. A `replace` claim removes the
-   * built-in options, their hints and their keymap (arrows, Enter, Escape, fullscreen, and the Ctrl+C handling of the
-   * prompt), so the claim owns the keys and answers through `context.client.permission.reply`. Keys the claim does not
-   * bind reach the session and app bindings, so Escape and Ctrl+C no longer reject the request.
+   * built-in options, their hints and their keymap (arrows, Enter, Escape and fullscreen), so the claim owns those keys
+   * and answers through `context.client.permission.reply`. Keys the claim does not bind reach the session and app
+   * bindings, so Escape no longer rejects the request. Ctrl+C stays with the prompt and rejects the request as it does
+   * without a claim, instead of exiting the app.
    */
   readonly "experimental.session.permission.options": { readonly sessionID: string; readonly requestID: string }
   readonly "session.panel": PanelInput

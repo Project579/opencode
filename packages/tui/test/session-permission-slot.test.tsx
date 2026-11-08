@@ -56,6 +56,21 @@ test("a replace claim swaps the options and their keys while the request stays v
   expect(setup.requests).toHaveLength(0)
 })
 
+test.each([
+  ["without a plugin claim", false],
+  ["under a replace claim", true],
+] as const)("ctrl+c at a permission prompt %s rejects the request instead of exiting", async (_name, claimed) => {
+  await using plugin = await copyPlugin("permission-options")
+  await using state = await tmpdir()
+  await using setup = await createPermissionFixture(state.path, claimed ? [plugin.directory] : [])
+  await setup.waitForFrame((frame) => frame.includes(claimed ? "Plugin options for" : "Allow once"))
+
+  setup.mockInput.pressKey("c", { ctrl: true })
+  await setup.waitFor(() => setup.requests.length === 1)
+  expect(setup.requests).toEqual([{ decision: "reject" }])
+  expect(setup.renderer.isDestroyed).toBe(false)
+})
+
 async function createPermissionFixture(state: string, plugins: string[] = []) {
   const session = {
     id: `ses_slot_${crypto.randomUUID()}`,
