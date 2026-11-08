@@ -1,0 +1,41 @@
+timeout 10 \\n  git status ||| timeout 10 \\n  git status
+timeout 10 git status \\n  --short ||| timeout 10 git status \\n  --short
+FOO=1 \\n  git status ||| FOO=1 \\n  git status
+git status \\n  --short ||| git status \\n  --short
+git \\n  push origin ||| git \\n  reset --hard
+! git push ||| ! git push --force
+if git diff --quiet; then git push; fi ||| git push --force
+x=1; git status
+export FOO=$(rm x)
+[[ -f x ]] && rm x
+while read f; do rm "$f"; done < list ||| rm -rf /
+(timeout 10 git status) ||| timeout 10 git status --x
+echo $(timeout 10 rm x) ||| timeout 10 rm -rf /
+for f in *.ts; do echo $f; done
+for f in a b; do timeout 5 rm $f; done ||| timeout 5 rm -rf /
+case x in a) rm x;; esac
+f() { rm x; }; f
+git status # check ||| git status # x
+timeout 10 git status # what? ||| timeout 10 git status # what?
+git commit -m 'x' # why? ||| git commit -m y
+FOO=1 git status &>/dev/null ||| FOO=1 git status --x
+<<EOF2 python3\nprint(1)\nEOF2 ||| <<EOF2 python3\nimport os\nEOF2
+<<EOF2 bash\necho hi\nEOF2 ||| <<EOF2 bash\nrm -rf ~\nEOF2
+<setup.sh bash ||| <evil.sh bash
+2>/dev/null sh ||| 2>/dev/null sh
+cat x | 2>/dev/null sh ||| cat /tmp/evil | 2>/dev/null sh
+cat x | sh - ||| cat y | sh -
+cat x | bash -s -- a ||| cat y | bash -s -- a
+cat x | sh -x ||| cat y | sh -x
+cat x | sudo -E bash ||| cat y | sudo -E bash
+cat x | python3 ||| cat y | python3
+cat x | python3 - ||| cat /tmp/evil | python3 -
+cat x | xargs -n1 sh -c 'echo "$0"'
+ls | xargs -I% sh -c 'echo %' ||| echo '; rm -rf ~' | xargs -I% sh -c 'echo %'
+ls | xargs sh -c ||| ls | xargs sh -c
+ls | xargs bash ||| echo /tmp/evil.sh | xargs bash
+ls | xargs -0 rm ||| ls | xargs -0 rm
+ls | parallel rm ||| ls | parallel 'rm -rf {}'
+ls | parallel -j4 sh -c '{}'
+git log | less ||| git log | less
+git log | tee out ||| git log | tee /etc/passwd

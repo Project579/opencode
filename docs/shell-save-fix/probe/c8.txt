@@ -1,0 +1,8 @@
+pkexec rm x ||| pkexec bash
+unshare rm x
+nsenter -t 1 ls
+taskset 1 rm x
+script -c ls
+\git push ||| /git push
+git a\ b ||| git a/ b
+FOO=1 git a\ b

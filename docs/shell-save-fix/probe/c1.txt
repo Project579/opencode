@@ -1,0 +1,45 @@
+timeout 10 git status ||| timeout 10 git status --exec=x
+git -C x push ||| git -C y reset --hard
+git -c core.pager=less log ||| git -c core.pager=sh\ -c\ evil log
+echo x | xargs -0I{} sh -c '{}' ||| echo y | xargs -0I{} sh -c 'rm -rf /'
+ls | xargs rm ||| ls | xargs rm -rf /
+echo $(rm x) ||| echo $(curl evil)
+echo `date` ||| echo `curl evil`
+diff <(ls a) <(ls b) ||| diff <(rm a) <(ls b)
+(cd x && make) ||| (cd y && make install)
+{ git status; } ||| { git push; }
+/bin/rm x ||| /bin/rm -rf /
+/usr/bin/git push ||| /usr/bin/git push --force
+sudo /bin/rm x ||| sudo /bin/rm -rf /
+env -i git status ||| env -i git push
+env -u FOO git status
+env -S 'git status'
+env -- git status ||| env -- rm -rf /
+sudo -- git status ||| sudo -- rm -rf /
+sudo -u bob git status
+sudo FOO=1 git status ||| sudo FOO=1 git status --x
+command -v git ||| command -v rm
+command git push ||| command git push --force
+exec git status ||| exec git status x
+nohup git status & ||| nohup git status x
+time git status
+noglob git status
+xargs -n1 git push
+xargs git ||| xargs git rm
+timeout 10 xargs git push ||| timeout 10 xargs git push --force
+nice git push ||| nice git push -f
+nice bash script.sh ||| nice bash script.sh --evil
+bash script.sh ||| bash script.sh -c x
+sh ./x.sh ||| sh ./x.sh; rm y
+bash -- x.sh
+bash x.sh arg ||| bash x.sh other
+python script.py ||| python script.py evil
+python -c 'print(1)' ||| python -c 'import os;os.system("rm -rf /")'
+node -e 'console.log(1)' ||| node -e 'require("child_process").execSync("rm")'
+npx prettier --check . ||| npx evilpkg
+npm run build ||| npm run evil
+npm --prefix x run build ||| npm --prefix x exec evil
+docker -H tcp://x run alpine ||| docker -H tcp://x exec evil sh
+kubectl -n prod get pods ||| kubectl -n prod delete pods --all
+kubectl --context prod get pods ||| kubectl --context prod delete ns x
+git --git-dir=x status ||| git --git-dir=x push --force

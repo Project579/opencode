@@ -1,0 +1,8 @@
+for f in a; do echo $f; done > out.txt ||| > ~/.bashrc
+{ echo a; echo b; } > out.txt ||| > ~/.bashrc
+echo a > out.txt ||| echo a > ~/.bashrc
+docker compose -f x.yml up ||| docker compose -f x.yml down -v
+docker compose up ||| docker compose down -v
+git -C x status ||| git -C x push --force
+gh -R o/r pr list ||| gh -R o/r repo delete
+cargo +nightly build ||| cargo +nightly install evil

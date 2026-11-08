@@ -1,0 +1,16 @@
+bash $SCRIPT ||| SCRIPT=-c; bash $SCRIPT 'rm -rf ~' ||| export SCRIPT=-c && bash $SCRIPT 'rm -rf ~'
+git $SUB status ||| SUB=reset; git $SUB --hard
+$EDITOR notes.txt ||| EDITOR=rm; $EDITOR -rf ~
+"$PYTHON" script.py ||| PYTHON=bash; "$PYTHON" -c 'rm -rf ~'
+sudo $PKG install x ||| PKG=rm; sudo $PKG -rf /
+timeout 10 $CMD ||| CMD=rm; timeout 10 $CMD -rf /
+npm run $TASK ||| TASK='x; rm -rf ~'; npm run $TASK
+FOO=$BAR git status ||| BAR=1; FOO=$BAR git status
+${GIT:-git} status ||| GIT=rm; ${GIT:-git} -rf ~
+fish -c 'ls' ||| fish -c 'rm -rf ~'
+csh -c 'ls' ||| csh -c 'rm'
+nu -c 'ls'
+busybox sh -c 'ls' ||| busybox sh -c 'rm'
+dash ./x.sh ||| dash ./x.sh y
+timeout 10  git status ||| timeout 10  git status
+sudo  rm x
