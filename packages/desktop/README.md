@@ -69,14 +69,21 @@ through. The file must meet these rules:
 Windows does not support password files. Use `OPENCODE_PASSWORD` there.
 
 In this mode the desktop deletes `OPENCODE_PASSWORD` and `OPENCODE_SERVER_PASSWORD` from its own environment, so child
-processes do not inherit them. It also ignores these variables when a login shell exports them. A password file avoids
-the remaining exposure, because only the path sits in the environment.
+processes do not inherit them. A password file avoids the remaining exposure, because only the path sits in the
+environment.
+
+The desktop ignores these variables when a login shell exports them: `OPENCODE_EXPERIMENTAL_DESKTOP_SERVER` and
+`OPENCODE_PASSWORD_FILE`, in every mode, and the plain password variables in explicit mode. Set both
+`OPENCODE_EXPERIMENTAL_DESKTOP_SERVER` and `OPENCODE_PASSWORD_FILE` in the desktop's launch environment, for example in
+the launcher or the `.desktop` Exec line, not in `.zshrc`. If `OPENCODE_EXPERIMENTAL_DESKTOP_SERVER` is missing there,
+the desktop runs in stock mode and manages its own service.
 
 The desktop does not start, stop, replace or signal a service. It does not stage or run the CLI for the connection. The
-server must stay up on its own, because the desktop never restarts it. If the server is down, the error page offers
-Restart. A relaunch stays in explicit mode. A password given in `OPENCODE_PASSWORD` or `OPENCODE_SERVER_PASSWORD` is
-gone after the first launch, so a relaunch with one of those fails with a password error. Use `OPENCODE_PASSWORD_FILE`
-if the app must survive a relaunch.
+server must stay up on its own: start it from its own unit or launcher, because the desktop never starts or restarts it.
+If the server is down, the error page offers Restart. Restart relaunches the desktop, which connects again. It does not
+restart the server. A relaunch stays in explicit mode. A password given in `OPENCODE_PASSWORD` or
+`OPENCODE_SERVER_PASSWORD` is gone after the first launch, so a relaunch with one of those fails with a password error.
+Use `OPENCODE_PASSWORD_FILE` if the app must survive a relaunch.
 
 The Pairing page does nothing in this mode. SSH askpass and the macOS CLI installer still run the bundled CLI. When you
 use them, they create OpenCode folders in the home directory.
