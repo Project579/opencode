@@ -46,6 +46,41 @@ Each beta build compiles in its commit and the `feat`, `fix` and `perf` commits 
 update, the beta app lists the ones after the commit of the build the user saw last in a "What's new in beta" dialog,
 unless release notes are turned off in Settings.
 
+## Explicit server (experimental)
+
+Set `OPENCODE_EXPERIMENTAL_DESKTOP_SERVER` to `http://127.0.0.1:<port>` and the desktop connects to that server. It does
+not discover, start or manage a background service. Any non-empty value turns this mode on. A value that does not parse
+makes every connect fail with an error. The desktop never falls back to the managed service.
+
+The URL must use `http` and the host `127.0.0.1` or `localhost`. It must have no path, query or userinfo. Prefer
+`127.0.0.1`: `localhost` only works if Node falls back from IPv6 to IPv4 when the server listens on IPv4 only. The probe
+does not follow redirects.
+
+The password comes from the first of these that is set and non-empty: `OPENCODE_PASSWORD`, `OPENCODE_SERVER_PASSWORD`,
+`OPENCODE_PASSWORD_FILE`. The CLI uses the same order. If no variable is set, the desktop sends no Authorization header.
+If the order reaches `OPENCODE_PASSWORD_FILE` and the file fails a check, that is an error. The desktop does not fall
+through. The file must meet these rules:
+
+- It is a regular file. A symlink is rejected.
+- You own it, and it has no group or other permission bits (mode 0600 or stricter).
+- It is at most 4 KiB, and it is not empty after the desktop trims surrounding whitespace.
+- The desktop reads it again on every connect, so a rotated password takes effect on the next reconnect.
+
+Windows does not support password files. Use `OPENCODE_PASSWORD` there.
+
+In this mode the desktop deletes `OPENCODE_PASSWORD` and `OPENCODE_SERVER_PASSWORD` from its own environment, so child
+processes do not inherit them. It also ignores these variables when a login shell exports them. A password file avoids
+the remaining exposure, because only the path sits in the environment.
+
+The desktop does not start, stop, replace or signal a service. It does not stage or run the CLI for the connection. The
+server must stay up on its own, because the desktop never restarts it. If the server is down, the error page offers
+Restart. A relaunch stays in explicit mode. A password given in `OPENCODE_PASSWORD` or `OPENCODE_SERVER_PASSWORD` is
+gone after the first launch, so a relaunch with one of those fails with a password error. Use `OPENCODE_PASSWORD_FILE`
+if the app must survive a relaunch.
+
+The Pairing page does nothing in this mode. SSH askpass and the macOS CLI installer still run the bundled CLI. When you
+use them, they create OpenCode folders in the home directory.
+
 ## Startup benchmark
 
 `perf/startup.bench.ts` times a launch with [strobe](https://github.com/anomalyco/strobe), from process spawn to what a
