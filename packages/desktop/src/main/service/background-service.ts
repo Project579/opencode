@@ -38,6 +38,7 @@ export const layer = Layer.effect(
         ensure: server
           ? () => ExplicitServer.connectExplicit(server, bundled)
           : (mode) => ensure(mode).pipe(Effect.provide(context)),
+        failureLabel: server ? "explicit server connect failed" : undefined,
         publish: (data) => {
           SidecarCredentials.set(data)
           // Every window moves its requests and event stream to the new origin, not only the one that reconnected.
