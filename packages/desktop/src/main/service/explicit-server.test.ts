@@ -9,6 +9,7 @@ const SERVER = "OPENCODE_EXPERIMENTAL_DESKTOP_SERVER"
 const FILE = "OPENCODE_PASSWORD_FILE"
 
 let server: ReturnType<typeof Bun.serve> | undefined
+let socketServer: ReturnType<typeof Bun.listen> | undefined
 let dir: string
 
 beforeEach(() => {
@@ -18,6 +19,8 @@ beforeEach(() => {
 afterEach(() => {
   server?.stop(true)
   server = undefined
+  socketServer?.stop(true)
+  socketServer = undefined
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -162,6 +165,11 @@ describe("explicit server connect", () => {
       respond: () => new Response(null, { status: 504 }),
       message: (o: string) => `The OpenCode server at ${o} is not reachable or not ready`,
     },
+    {
+      name: "302",
+      respond: () => new Response(null, { status: 302, headers: { location: "http://127.0.0.1:1/api/info" } }),
+      message: (o: string) => `The server at ${o} is not a compatible OpenCode server`,
+    },
     // Review Focus 1: something else listens on the port.
     {
       name: "200 without version",
@@ -176,6 +184,24 @@ describe("explicit server connect", () => {
   ])("maps failed probes to errors: $name", async (row) => {
     const { origin } = stub(row.respond)
     expect((await failure({ [SERVER]: origin, OPENCODE_PASSWORD: "secret" })).message).toBe(row.message(origin))
+  })
+
+  test("a body that is cut off after the headers is unavailable", async () => {
+    // Bun.serve cannot send headers and then reset, so a raw socket promises 100 bytes and closes after 6.
+    socketServer = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write('HTTP/1.1 200 OK\r\ncontent-length: 100\r\ncontent-type: application/json\r\n\r\n{"vers')
+          socket.end()
+        },
+      },
+    })
+    const origin = `http://127.0.0.1:${socketServer.port}`
+    expect((await failure({ [SERVER]: origin })).message).toBe(
+      `The OpenCode server at ${origin} is not reachable or not ready`,
+    )
   })
 
   test("a closed port is unavailable", async () => {

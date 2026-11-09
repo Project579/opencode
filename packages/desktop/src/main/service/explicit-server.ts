@@ -69,12 +69,17 @@ export const connectExplicit = Effect.fn("ExplicitServer.connect")(function* (
   const password = server.password ?? (server.passwordFile ? yield* readPassword(server.passwordFile) : undefined)
   const header = authorization({ url: origin, password: password ?? null }, origin)
 
+  // The body is read inside this step: a timeout or reset while it streams means the server is unavailable.
   const response = yield* Effect.tryPromise({
-    try: () =>
-      fetch(`${origin}/api/info`, {
+    try: async () => {
+      const response = await fetch(`${origin}/api/info`, {
         headers: header ? { authorization: header } : {},
+        // A redirect means something else answers on this port; it is not followed.
+        redirect: "manual",
         signal: AbortSignal.timeout(5_000),
-      }),
+      })
+      return { status: response.status, text: response.status === 200 ? await response.text() : "" }
+    },
     catch: () => serverError("unavailable", origin),
   })
 
@@ -82,13 +87,9 @@ export const connectExplicit = Effect.fn("ExplicitServer.connect")(function* (
   if ([500, 502, 503, 504].includes(response.status)) return yield* Effect.fail(serverError("unavailable", origin))
   if (response.status !== 200) return yield* Effect.fail(serverError("incompatible", origin))
 
-  // Parsed apart from the fetch: a body that is not JSON means something else answers on this port, not that the
+  // Decoded apart from the fetch: a body that is not JSON means something else answers on this port, not that the
   // server is down.
-  const body = yield* Effect.tryPromise({
-    try: () => response.json(),
-    catch: () => serverError("incompatible", origin),
-  })
-  const info = Schema.decodeUnknownOption(Info)(body)
+  const info = Schema.decodeUnknownOption(Schema.fromJsonString(Info))(response.text)
   if (info._tag === "None") return yield* Effect.fail(serverError("incompatible", origin))
 
   if (bundled !== undefined && info.value.version !== bundled) {
