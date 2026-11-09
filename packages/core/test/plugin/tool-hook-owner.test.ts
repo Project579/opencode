@@ -120,10 +120,10 @@ it.live("a plugin cannot forge or clear the owner through the tools it can reach
       editor.update("deploy", (tool) => void kept.push(tool))
       // Live objects from get and list, and a kept update reference, can be rewritten but carry no owner.
       const forged = { codemode: false, experimental: { plugin: "other" } }
-      Reflect.set(editor.get("deploy") ?? {}, "options", forged)
-      Reflect.set(editor.list()[0] ?? {}, "options", forged)
+      Object.assign(editor.get("deploy") ?? {}, { options: forged })
+      Object.assign(editor.list()[0] ?? {}, { options: forged })
     })
-    Reflect.set(kept[0] ?? {}, "options", { codemode: false, experimental: { plugin: undefined } })
+    Object.assign(kept[0] ?? {}, { options: { codemode: false, experimental: { plugin: undefined } } })
     expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ plugin: "acme", addedBy: "acme" })
   }),
 )
@@ -176,10 +176,15 @@ it.live("a hook cannot change the owner that later hooks see, and core still run
     const later: unknown[] = []
     yield* hooks.register("tool", "execute.before", (event) =>
       Effect.sync(() => {
+        // Reflect reports whether each write was refused; plain assignment would throw instead of returning a result.
         attempts.push(
+          // oxlint-disable-next-line no-restricted-globals -- The test asserts the refusal result of the write.
           Reflect.set(event.experimental ?? {}, "plugin", "evil"),
+          // oxlint-disable-next-line no-restricted-globals -- The test asserts the refusal result of the write.
           Reflect.set(event, "experimental", { plugin: undefined }),
+          // oxlint-disable-next-line no-restricted-globals -- The test asserts the refusal result of the redefinition.
           Reflect.defineProperty(event, "experimental", { value: { plugin: undefined } }),
+          // oxlint-disable-next-line no-restricted-globals -- The test asserts the refusal result of the delete.
           Reflect.deleteProperty(event, "experimental"),
         )
       }),
@@ -434,7 +439,63 @@ it.live("a Code Mode inner call and a renamed call report addedBy of the tool th
     yield* hooks.register("tool", "execute.before", (event) =>
       Effect.sync(() => void later.push({ ...event.experimental })),
     )
-    yield* (yield* tools.snapshot()).execute(call("direct"))
+    const renamed = yield* tools.snapshot()
+    yield* renamed.execute(call("direct"))
     expect(later).toEqual([{ selfChecks: false }])
+  }),
+)
+
+it.live("an unknown tool reports an empty object with no addedBy", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    yield* a.tool.transform((editor) => editor.add(make("deploy")))
+    yield* a.tool.transform((editor) => editor.remove("deploy"))
+    const hooks = yield* PluginHooks.Service
+    const tools = yield* Tool.Service
+    const seen: unknown[] = []
+    yield* hooks.register("tool", "execute.before", (event) =>
+      Effect.sync(() => void seen.push({ ...event.experimental })),
+    )
+    const snapshot = yield* tools.snapshot()
+    yield* snapshot.execute(call("deploy")).pipe(Effect.ignore)
+    expect(seen).toEqual([{}])
+  }),
+)
+
+it.live("a call renamed between two installed tools reports the target tool's addedBy", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const hooks = yield* PluginHooks.Service
+    const tools = yield* Tool.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    const b = yield* PluginHost.make(plugins, "b", { type: "local", path: "/b" })
+    yield* a.tool.transform((editor) => editor.add(make("first")))
+    yield* b.tool.transform((editor) => editor.add(make("second")))
+    const later: unknown[] = []
+    yield* hooks.register("tool", "execute.before", (event) => Effect.sync(() => void (event.tool = "second")))
+    yield* hooks.register("tool", "execute.before", (event) =>
+      Effect.sync(() => void later.push({ ...event.experimental })),
+    )
+    const snapshot = yield* tools.snapshot()
+    const result = yield* snapshot.execute(call("first"))
+    expect(later).toEqual([{ plugin: "b", addedBy: "b", selfChecks: false }])
+    expect(result.content).toEqual([{ type: "text", text: "second:first" }])
+  }),
+)
+
+it.live("a rejected built-in add over an installed tool leaves addedBy unchanged", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    yield* a.tool.transform((editor) => editor.add(make("deploy")))
+    // Not a schema, so `commit` refuses it before the built-in add can clear anything.
+    yield* core.tool.transform((editor) => editor.add({ ...make("deploy"), input: 5 as never }))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({
+      plugin: "a",
+      addedBy: "a",
+      selfChecks: false,
+    })
   }),
 )

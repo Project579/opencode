@@ -50,6 +50,11 @@ const isRpcType = (type: string): type is RpcEvent["type"] => type.startsWith("r
 const isRpcEvent = (event: Event.Payload): event is RpcEvent => isRpcType(event.type)
 const isPublicEvent = (event: Event.Payload): event is EventManifest.ServerEvent | RpcEvent =>
   EventManifest.isServer(event) || isRpcEvent(event)
+/**
+ * `source` defaults to built-in so tests that do not care about attribution can leave it out. Production callers must
+ * pass the plugin's real source: omitting it makes an installed plugin's tools look built-in, which turns off any gate
+ * that keys on `experimental.plugin` or `experimental.addedBy`.
+ */
 export const make = Effect.fn("PluginHost.make")(function* (
   plugin: Pick<Interface, "list">,
   pluginID: string,
