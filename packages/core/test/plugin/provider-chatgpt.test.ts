@@ -42,19 +42,19 @@ const unavailableModels = HttpClient.make((request) =>
 
 const addPlugin = Effect.fn(function* (http = unavailableModels) {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, ChatGPTPlugin.id, { type: "builtin" })
+  const host = yield* PluginHost.make(plugin, ChatGPTPlugin.id)
   yield* ChatGPTPlugin.effect(host).pipe(Effect.provideService(HttpClient.HttpClient, http))
 })
 
 const addLegacyPlugin = Effect.fn(function* () {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, OpenAIPlugin.id, { type: "builtin" })
+  const host = yield* PluginHost.make(plugin, OpenAIPlugin.id)
   yield* OpenAIPlugin.effect(host)
 })
 
 const addGithubCopilotPlugin = Effect.fn(function* () {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
+  const host = yield* PluginHost.make(plugin, "test")
   yield* GithubCopilotPlugin.effect(host)
 })
 
@@ -257,11 +257,7 @@ describe("ChatGPTPlugin", () => {
       yield* addPlugin()
       yield* addLegacyPlugin()
       const integrations = yield* Integration.Service
-      expect(
-        (yield* integrations.get(Integration.ID.make("openai")))?.methods.map(
-          (method) => method.type === "oauth" && method.id,
-        ),
-      ).toEqual([
+      expect((yield* integrations.get(Integration.ID.make("openai")))?.methods.map((method) => method.type === "oauth" && method.id)).toEqual([
         Integration.MethodID.make("chatgpt-token-sharing"),
         Integration.MethodID.make("chatgpt-browser"),
         Integration.MethodID.make("chatgpt-headless"),
@@ -815,12 +811,7 @@ describe("ChatGPTPlugin", () => {
         "gpt-4.99",
       ])
         expect(yield* models.get(Provider.ID.openai, Model.ID.make(id))).toBeUndefined()
-      expect(
-        (yield* models.available())
-          .filter((model) => model.providerID === Provider.ID.openai)
-          .map((model) => model.id)
-          .sort(),
-      ).toEqual(
+      expect((yield* models.available()).filter((model) => model.providerID === Provider.ID.openai).map((model) => model.id).sort()).toEqual(
         [
           "gpt-5.5",
           "gpt-5.5-fast",

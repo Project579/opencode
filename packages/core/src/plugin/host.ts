@@ -53,7 +53,7 @@ const isPublicEvent = (event: Event.Payload): event is EventManifest.ServerEvent
 export const make = Effect.fn("PluginHost.make")(function* (
   plugin: Pick<Interface, "list">,
   pluginID: string,
-  source: NonNullable<Generation["source"]>,
+  source: NonNullable<Generation["source"]> = { type: "builtin" },
 ) {
   const app = yield* App.Service
   const agents = yield* Agent.Service

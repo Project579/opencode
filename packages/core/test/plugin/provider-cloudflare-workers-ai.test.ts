@@ -16,7 +16,7 @@ const providerID = Provider.ID.make("cloudflare-workers-ai")
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
+  const host = yield* PluginHost.make(plugin, "test")
   yield* CloudflareWorkersAIPlugin.effect(host)
 })
 

@@ -28,7 +28,7 @@ describe("ConfigImagePlugin.Plugin", () => {
       const bus = yield* Bus.Service
       const config = yield* Config.Test
       const plugins = yield* Plugin.Service
-      yield* ConfigImagePlugin.Plugin.effect(yield* PluginHost.make(plugins, "test", { type: "builtin" }))
+      yield* ConfigImagePlugin.Plugin.effect(yield* PluginHost.make(plugins, "test"))
 
       expect(yield* limits(image)).toEqual({ maxWidth: 1_200, maxHeight: 900, maxBytes: 1 })
 
@@ -58,7 +58,7 @@ describe("ConfigImagePlugin.Plugin", () => {
         entries: () => Effect.sync(() => [document({ max_width: reads++ === 0 ? 1_200 : 700, max_base64_bytes: 1 })]),
         changes: () => Stream.empty,
       })
-      yield* ConfigImagePlugin.Plugin.effect(yield* PluginHost.make(plugins, "test", { type: "builtin" })).pipe(
+      yield* ConfigImagePlugin.Plugin.effect(yield* PluginHost.make(plugins, "test")).pipe(
         Effect.provideService(Config.Service, config),
       )
 

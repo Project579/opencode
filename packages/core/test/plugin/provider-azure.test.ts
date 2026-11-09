@@ -34,7 +34,7 @@ const offline = { resource: () => "http://127.0.0.1:1/openai", management: "http
 
 const addPlugin = Effect.fn(function* (endpoints = offline) {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
+  const host = yield* PluginHost.make(plugin, "test")
   yield* make(endpoints).effect(host)
 })
 
@@ -510,7 +510,7 @@ describe("AzurePlugin discovery", () => {
       yield* connect(keyCredential())
       yield* addPlugin(azure.endpoints)
       const plugin = yield* Plugin.Service
-      yield* ConfigProviderPlugin.Plugin.effect(yield* PluginHost.make(plugin, "test", { type: "builtin" })).pipe(
+      yield* ConfigProviderPlugin.Plugin.effect(yield* PluginHost.make(plugin, "test")).pipe(
         Effect.provide(
           Config.testLayer([
             new Document({

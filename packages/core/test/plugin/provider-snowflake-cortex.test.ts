@@ -53,7 +53,7 @@ const fixture = Effect.fn(function* () {
   const location = yield* Location.Service
   const hooks = yield* PluginHooks.Service
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
+  const host = yield* PluginHost.make(plugin, "test")
   yield* providers.transform((editor) => {
     editor.update(providerID, (provider) => {
       provider.package = "@opencode/ai/providers/openai-compatible"
@@ -227,7 +227,9 @@ it.live("uses environment tokens rather than the account identifier and bypasses
           type: "env",
           name: "SNOWFLAKE_CORTEX_TOKEN",
         })
-        expect((yield* test.providers.get(providerID))?.package).toBe("@opencode/ai/providers/openai-compatible")
+        expect((yield* test.providers.get(providerID))?.package).toBe(
+          "@opencode/ai/providers/openai-compatible",
+        )
         expect(yield* test.hooks.has("aisdk", "sdk", providerID)).toBe(false)
 
         yield* test.stop

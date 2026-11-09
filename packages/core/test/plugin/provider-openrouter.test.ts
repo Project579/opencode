@@ -13,7 +13,7 @@ const it = testEffect(PluginTestLayer)
 
 const addPlugin = Effect.fn(function* () {
   const plugin = yield* Plugin.Service
-  const host = yield* PluginHost.make(plugin, "test", { type: "builtin" })
+  const host = yield* PluginHost.make(plugin, "test")
   yield* OpenRouterPlugin.effect(host)
 })
 
@@ -58,7 +58,9 @@ describe("OpenRouterPlugin", () => {
       })
       yield* addPlugin()
 
-      expect((yield* models.get(Provider.ID.openrouter, Model.ID.make("openai/gpt-5-chat")))?.enabled).toBe(false)
+      expect((yield* models.get(Provider.ID.openrouter, Model.ID.make("openai/gpt-5-chat")))?.enabled).toBe(
+        false,
+      )
       expect((yield* models.get(Provider.ID.openrouter, Model.ID.make("openai/gpt-5")))?.enabled).toBe(true)
       expect((yield* models.get(Provider.ID.openai, Model.ID.make("openai/gpt-5-chat")))?.enabled).toBe(true)
     }),
