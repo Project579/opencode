@@ -9,8 +9,9 @@ import { BackgroundServiceMachine } from "./background-service-machine"
 import { cleanStages } from "./cli-stages"
 import { keptStages, serviceVersion, shouldRetryEnsure } from "./cli-version"
 import { DesktopCli } from "./desktop-cli"
+import { ExplicitServer } from "./explicit-server"
 import { SidecarCredentials } from "./sidecar-credentials"
-import { takeSidecarProbe } from "./sidecar-probe"
+import { bundledVersion, takeSidecarProbe } from "./sidecar-probe"
 
 export * as BackgroundService from "./background-service"
 
@@ -27,11 +28,16 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | DesktopCli.Service>()
+    const server = ExplicitServer.configured()
+    // An explicit server is only connected to: no probe, no CLI, no stage and no service registry.
+    const bundled = CHANNEL === "beta" ? undefined : bundledVersion() || undefined
 
     return Service.of(
       yield* BackgroundServiceMachine.make({
-        probe: probe().pipe(Effect.provide(context)),
-        ensure: (mode) => ensure(mode).pipe(Effect.provide(context)),
+        probe: server ? Effect.succeed(undefined) : probe().pipe(Effect.provide(context)),
+        ensure: server
+          ? () => ExplicitServer.connectExplicit(server, bundled)
+          : (mode) => ensure(mode).pipe(Effect.provide(context)),
         publish: (data) => {
           SidecarCredentials.set(data)
           // Every window moves its requests and event stream to the new origin, not only the one that reconnected.

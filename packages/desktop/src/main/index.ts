@@ -2,6 +2,7 @@
 import { marks } from "./lifecycle/marks"
 import { app } from "electron"
 import { acquireApplicationLock, configureApplication } from "./lifecycle/configure"
+import { explicitServer } from "./service/explicit-server"
 import { startSidecarProbe } from "./service/sidecar-probe"
 import { registerStorageSnapshotHandler } from "./storage/snapshot"
 import { createEarlyWindow, earlyWindowClosed } from "./windows/early"
@@ -13,6 +14,8 @@ import { registerRendererScheme } from "./windows/scheme"
 // hundred milliseconds of module evaluation and layers — loads. Configuration and the scheme must
 // precede ready; the window is created the moment ready fires; everything else is imported after.
 configureApplication()
+// Clears the plain password variables from `process.env` before any child process can inherit them.
+explicitServer(process.env)
 
 if (acquireApplicationLock()) {
   registerRendererScheme()

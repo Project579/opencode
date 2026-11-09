@@ -56,6 +56,7 @@ import {
   nativePluralCategory,
   onNativeTranslations,
 } from "../native/translations"
+import { ExplicitServer } from "../service/explicit-server"
 import { SidecarCredentials } from "../service/sidecar-credentials"
 import type { Database } from "../storage/database"
 import type { StateStore } from "../storage/state"
@@ -204,7 +205,12 @@ export function createHost(input: {
   ) => void
 }) {
   const definitions: readonly Entry[] = builtins
-  const local = definitions.filter((definition) => runsOn(definition, os))
+  // The pairing main runs `service` commands that stop and ensure services through the host registry, which an
+  // explicit server must never touch. Its renderer page stays listed but inert. `definitions` keeps "pairing" so the
+  // built-in ids, reserved ids and storage flag still cover it and a shipped plugin cannot take the id.
+  const local = definitions.filter(
+    (definition) => runsOn(definition, os) && !(ExplicitServer.configured() && definition.id === "pairing"),
+  )
 
   const manager = createManager(
     input.db,
