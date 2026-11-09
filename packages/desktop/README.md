@@ -64,7 +64,8 @@ through. The file must meet these rules:
 - It is a regular file. A symlink is rejected.
 - You own it, and it has no group or other permission bits (mode 0600 or stricter).
 - It is at most 4 KiB, and it is not empty after the desktop trims surrounding whitespace.
-- The desktop reads it again on every connect, so a rotated password takes effect on the next reconnect.
+- The desktop reads it again on every connect. After a password rotation, reload the window (View > Reload) or relaunch
+  the desktop. Until then every request gets a 401. A server restart that keeps the same password reconnects by itself.
 
 Windows does not support password files. Use `OPENCODE_PASSWORD` there.
 
@@ -84,6 +85,10 @@ If the server is down, the error page offers Restart. Restart relaunches the des
 restart the server. A relaunch stays in explicit mode. A password given in `OPENCODE_PASSWORD` or
 `OPENCODE_SERVER_PASSWORD` is gone after the first launch, so a relaunch with one of those fails with a password error.
 Use `OPENCODE_PASSWORD_FILE` if the app must survive a relaunch.
+
+On first launch, onboarding can create `~/Default Project` on the host, and a sandboxed server cannot see it. A launcher
+can avoid this by setting `firstLaunchOnboardingComplete: true` in the desktop's `opencode.settings` before the first
+launch.
 
 The Pairing page does nothing in this mode. SSH askpass and the macOS CLI installer still run the bundled CLI. When you
 use them, they create OpenCode folders in the home directory.

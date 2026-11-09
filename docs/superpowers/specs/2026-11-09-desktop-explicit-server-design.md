@@ -34,8 +34,9 @@ are untouched.
   - runs the pairing plugin's `service` commands.
 - Two user-triggered paths still run the bundled CLI, by design (step 6), and both create OpenCode folders in the real
   home when used: the SSH askpass helper and the CLI installer (macOS only, `desktop-cli.ts:44`).
-- The password never reaches a child process or the renderer, and the desktop picks up a rotated password on
-  reconnect.
+- The password never reaches a child process or the renderer. A reconnect picks up a rotated password, but after a
+  rotation the renderer does not ask for one: the user reloads the window or relaunches (found in the 2026-11-09 live
+  check).
 - One password-file reader is shared by the desktop and the CLI, with the same checks and the same precedence.
 
 ## Non-goals and assumptions
@@ -48,8 +49,9 @@ are untouched.
   includes `opencode://` links, which the desktop entry handles. A launch without the variables takes the stock path.
 - The home service keeps its password across restarts. It rotates the password only on an explicit rotate, forget or
   reinstall (aursandbox decision). So long-lived `--server` TUI and CLI clients, which read the password once, need no
-  reconnect change. The desktop still re-reads `_FILE` on every connect, so it follows an explicit rotation without a
-  restart.
+  reconnect change. The desktop still re-reads `_FILE` on every connect, so a reload or relaunch follows an explicit
+  rotation. The renderer marks the server unauthorized and does not ask main to reconnect (found in the 2026-11-09 live
+  check).
 - The aursandbox launchers build the environment from an allowlist and scrub any inherited `OPENCODE_PASSWORD` or
   `OPENCODE_SERVER_PASSWORD`. That lets the #52156 order (plain variables before the file) stand.
 
@@ -236,7 +238,7 @@ that lands first, this hunk shrinks to what it lacks: the shared checks, the `En
 | Password file is a symlink, owned by another user, group- or world-readable, too large, or missing | Password-file error; no request is sent. |
 | 404 on `/api/info` | Incompatible error. |
 | Version mismatch | A warning in the main log; the connection continues (CLI parity, `server-connection.ts:45-48`). |
-| Password rotated explicitly (the server restarts) | Requests fail. The reconnect re-reads `_FILE`, the changed password is published, and requests resume. This needs a fixed port. A plain-variable password cannot rotate. |
+| Password rotated explicitly (the server restarts) | Requests get 401. The renderer does not ask main to reconnect, so `_FILE` is not re-read until the user reloads the window (View > Reload) or relaunches; then the changed password is published and requests resume. A restart with the same password reconnects by itself. This needs a fixed port. A plain-variable password cannot rotate. Found in the 2026-11-09 live check. |
 | Relaunch | Stays in explicit mode (step 9). A plain-variable password is gone after the first launch. |
 | Invalid URL value | Invalid-URL error on every connect. No discover and no fallback; the password variables are still cleared. |
 
@@ -328,7 +330,8 @@ Source:
   - a version mismatch still connects;
   - rewriting the file between two calls returns the new password.
 - **Manual**, using the launcher and the home service:
-  - `systemctl --user restart` with desktop open: the password rotates and the session resumes;
+  - `systemctl --user restart` with desktop open: with the same password the session resumes; after a rotation it
+    resumes only after View > Reload or a relaunch (2026-11-09 live check);
   - menu Relaunch;
   - `~/.config/opencode`, `~/.cache/opencode`, `service.json` and `<userData>/cli/` stages are never created on the host
     as long as SSH remotes and the CLI installer are not used (SSH askpass and, on macOS, the installer create the
