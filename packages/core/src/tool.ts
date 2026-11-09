@@ -42,15 +42,19 @@ type Data = {
   // Converted once at registration; schemas cannot change without re-registering the tool.
   definitions: Map<string, ToolDefinition>
   namespaces: Map<string, Tool.Namespace>
-  // Written only through `Interface.installed`, never through the plugin-facing editor or the stored tools.
+  // `owners` and `addedBy` are written only through `Interface.installed`, never through the plugin-facing editor or
+  // the stored tools.
   owners: Map<string, string>
+  // The installed plugin whose `add` created the current registration; unlike `owners`, an update does not change it.
+  addedBy: Map<string, string>
   errors: { kind: "tool" | "namespace"; name: string; namespace?: string; error: RegistrationError }[]
 }
 
 export interface Interface extends State.Transformable<Editor> {
   /**
    * Like `transform`, but every tool the callback adds or updates records `owner` as the installed plugin that provided
-   * it, and an add replaces any earlier owner. Only the plugin host calls this; plugins have no other way to write it.
+   * it, and an add replaces any earlier owner and `addedBy`. Only the plugin host calls this; plugins have no other way
+   * to write it.
    */
   readonly installed: (owner: string) => State.Transform<Editor>
   readonly list: () => Effect.Effect<ReadonlyArray<Tool.Info & { readonly id: string }>>
@@ -227,6 +231,7 @@ const layer = Layer.effect(
         definitions: new Map(),
         namespaces: new Map(),
         owners: new Map(),
+        addedBy: new Map(),
         errors: [],
       }),
       editor: (editor) => {
@@ -246,8 +251,13 @@ const layer = Layer.effect(
           add: (tool) => {
             const id = effectiveName(tool)
             if (!commit(editor, id, { ...tool, id, options: tool.options && { ...tool.options } })) return
-            if (owner === undefined) editor.owners.delete(id)
-            else editor.owners.set(id, owner)
+            if (owner === undefined) {
+              editor.owners.delete(id)
+              editor.addedBy.delete(id)
+              return
+            }
+            editor.owners.set(id, owner)
+            editor.addedBy.set(id, owner)
           },
           update: (id, update) => {
             const current = editor.tools.get(id)
@@ -265,6 +275,7 @@ const layer = Layer.effect(
             editor.tools.delete(id)
             editor.definitions.delete(id)
             editor.owners.delete(id)
+            editor.addedBy.delete(id)
           },
         })
         return { as }
@@ -410,8 +421,10 @@ function experimental(data: Data, id: string | undefined) {
   const tool = id === undefined ? undefined : data.tools.get(id)
   if (id === undefined || tool === undefined) return Object.freeze({})
   const plugin = data.owners.get(id)
+  const addedBy = data.addedBy.get(id)
   return Object.freeze({
     ...(plugin === undefined ? {} : { plugin }),
+    ...(addedBy === undefined ? {} : { addedBy }),
     selfChecks: tool.options?.experimental?.permission?.self === true,
   })
 }

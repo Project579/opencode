@@ -52,7 +52,9 @@ it.live("a tool an installed plugin adds reports that plugin's id", () =>
     const host = yield* PluginHost.make(plugins, "acme", installed)
     yield* host.tool.transform((editor) => editor.add(make("deploy")))
     const observed = yield* observe("deploy")
-    expect(observed.seen).toEqual([{ tool: "deploy", experimental: { plugin: "acme", selfChecks: false } }])
+    expect(observed.seen).toEqual([
+      { tool: "deploy", experimental: { plugin: "acme", addedBy: "acme", selfChecks: false } },
+    ])
   }),
 )
 
@@ -79,7 +81,7 @@ it.live("selfChecks is true for a tool that sets options.experimental.permission
       editor.add(make("careful", { codemode: false, experimental: { permission: { self: true } } })),
     )
     const observed = yield* observe("careful")
-    expect(observed.seen[0]?.experimental).toEqual({ plugin: "acme", selfChecks: true })
+    expect(observed.seen[0]?.experimental).toEqual({ plugin: "acme", addedBy: "acme", selfChecks: true })
   }),
 )
 
@@ -104,7 +106,7 @@ it.live("a Code Mode inner call reports the same values as a direct call", () =>
     const inner = seen.filter((event) => event.tool !== "execute")
     expect(inner).toHaveLength(2)
     expect(inner[1]?.experimental).toEqual(inner[0]?.experimental)
-    expect(inner[1]?.experimental).toEqual({ plugin: "acme", selfChecks: true })
+    expect(inner[1]?.experimental).toEqual({ plugin: "acme", addedBy: "acme", selfChecks: true })
   }),
 )
 
@@ -122,7 +124,7 @@ it.live("a plugin cannot forge or clear the owner through the tools it can reach
       Reflect.set(editor.list()[0] ?? {}, "options", forged)
     })
     Reflect.set(kept[0] ?? {}, "options", { codemode: false, experimental: { plugin: undefined } })
-    expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ plugin: "acme" })
+    expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ plugin: "acme", addedBy: "acme" })
   }),
 )
 
@@ -134,7 +136,7 @@ it.live("an installed plugin that updates a built-in tool becomes its owner", ()
     const host = yield* PluginHost.make(plugins, "acme", installed)
     yield* host.tool.transform((editor) => editor.update("read", (tool) => void (tool.description = "wrapped")))
     const observed = yield* observe("read")
-    expect(observed.seen[0]?.experimental).toMatchObject({ plugin: "acme" })
+    expect(observed.seen[0]?.experimental).toEqual({ plugin: "acme", selfChecks: false })
   }),
 )
 
@@ -188,7 +190,7 @@ it.live("a hook cannot change the owner that later hooks see, and core still run
     const snapshot = yield* tools.snapshot()
     const result = yield* snapshot.execute(call("deploy"))
     expect(attempts).toEqual([false, false, false, false])
-    expect(later).toEqual([{ plugin: "acme", selfChecks: false }])
+    expect(later).toEqual([{ plugin: "acme", addedBy: "acme", selfChecks: false }])
     expect(result.content).toEqual([{ type: "text", text: "deploy:deploy" }])
   }),
 )
@@ -237,7 +239,202 @@ it.live("a Promise plugin's tools report the plugin's id", () =>
       },
     }).effect(host)
     const observed = yield* observe("deploy")
-    expect(observed.seen[0]?.experimental).toEqual({ plugin: "promise-acme", selfChecks: false })
-    expect(seen).toEqual([{ plugin: "promise-acme", selfChecks: false }])
+    expect(observed.seen[0]?.experimental).toEqual({
+      plugin: "promise-acme",
+      addedBy: "promise-acme",
+      selfChecks: false,
+    })
+    expect(seen).toEqual([{ plugin: "promise-acme", addedBy: "promise-acme", selfChecks: false }])
+  }),
+)
+
+it.live("addedBy keeps the adding plugin across updates by other plugins and built-in sources", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    const b = yield* PluginHost.make(plugins, "b", { type: "local", path: "/b" })
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    const reword = (description: string) => (editor: Tool.Editor) =>
+      editor.update("deploy", (tool) => void (tool.description = description))
+    yield* a.tool.transform((editor) => editor.add(make("deploy")))
+    yield* b.tool.transform(reword("b"))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({
+      plugin: "b",
+      addedBy: "a",
+      selfChecks: false,
+    })
+
+    // A built-in update changes neither field.
+    yield* core.tool.transform(reword("core"))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({
+      plugin: "b",
+      addedBy: "a",
+      selfChecks: false,
+    })
+
+    // The same plugin updating its own tool keeps addedBy too.
+    yield* a.tool.transform(reword("a"))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({
+      plugin: "a",
+      addedBy: "a",
+      selfChecks: false,
+    })
+
+    // A later add by B takes both fields.
+    yield* b.tool.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({
+      plugin: "b",
+      addedBy: "b",
+      selfChecks: false,
+    })
+  }),
+)
+
+it.live("a built-in tool an installed plugin updates has an owner but no addedBy", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    const b = yield* PluginHost.make(plugins, "b", installed)
+    yield* core.tool.transform((editor) => editor.add(make("shell")))
+    yield* b.tool.transform((editor) => editor.update("shell", (tool) => void (tool.description = "wrapped")))
+    expect((yield* observe("shell")).seen[0]?.experimental).toEqual({ plugin: "b", selfChecks: false })
+
+    // A tool of the same name added later by B is B's.
+    yield* b.tool.transform((editor) => editor.add(make("shell")))
+    expect((yield* observe("shell")).seen[0]?.experimental).toEqual({
+      plugin: "b",
+      addedBy: "b",
+      selfChecks: false,
+    })
+  }),
+)
+
+it.live("remove deletes addedBy, and a built-in or MCP add clears it", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const tools = yield* Tool.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    yield* a.tool.transform((editor) => editor.add(make("deploy")))
+    yield* a.tool.transform((editor) => editor.remove("deploy"))
+    // Re-added by a built-in source after a removal: nothing is left over from A.
+    yield* core.tool.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({ selfChecks: false })
+
+    yield* a.tool.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toMatchObject({ addedBy: "a" })
+    yield* core.tool.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({ selfChecks: false })
+
+    // MCP tools register on the Tool service directly, over a tool an installed plugin added.
+    yield* a.tool.transform((editor) => editor.add(make("deploy")))
+    yield* tools.transform((editor) => editor.add(make("deploy")))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({ selfChecks: false })
+  }),
+)
+
+it.live("a rejected add changes neither plugin nor addedBy", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    const b = yield* PluginHost.make(plugins, "b", { type: "local", path: "/b" })
+    yield* a.tool.transform((editor) => editor.add(make("deploy")))
+    // Not a schema, so `commit` refuses it.
+    yield* b.tool.transform((editor) => editor.add({ ...make("deploy"), input: 5 as never }))
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({
+      plugin: "a",
+      addedBy: "a",
+      selfChecks: false,
+    })
+  }),
+)
+
+it.live("namespaced tools follow the same addedBy rules", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    const b = yield* PluginHost.make(plugins, "b", { type: "local", path: "/b" })
+    yield* a.tool.transform((editor) => editor.add(make("deploy", { codemode: false, namespace: "ops" })))
+    // An update cannot move the tool out of its namespace, so the id and addedBy stay put.
+    yield* b.tool.transform((editor) =>
+      editor.update("ops_deploy", (tool) => void (tool.options = { codemode: false, namespace: "other" })),
+    )
+    expect((yield* observe("ops_deploy")).seen[0]?.experimental).toEqual({
+      plugin: "b",
+      addedBy: "a",
+      selfChecks: false,
+    })
+  }),
+)
+
+it.live("a plugin cannot forge addedBy through the editor or the tool objects", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    const b = yield* PluginHost.make(plugins, "b", { type: "local", path: "/b" })
+    const kept: Array<{ options?: unknown }> = []
+    yield* a.tool.transform((editor) => {
+      editor.add(make("deploy"))
+      editor.update("deploy", (tool) => void kept.push(tool))
+    })
+    yield* b.tool.transform((editor) => {
+      const forged = { codemode: false, experimental: { addedBy: "b", plugin: "b" } }
+      Object.assign(editor.get("deploy") ?? {}, { options: forged })
+      Object.assign(editor.list()[0] ?? {}, { options: forged })
+      editor.update("deploy", (tool) => void Object.assign(tool, { addedBy: "b" }))
+    })
+    // The reference A kept cannot clear it either.
+    Object.assign(kept[0] ?? {}, {
+      options: { codemode: false, experimental: { addedBy: undefined } },
+      addedBy: undefined,
+    })
+    expect((yield* observe("deploy")).seen[0]?.experimental).toEqual({
+      plugin: "b",
+      addedBy: "a",
+      selfChecks: false,
+    })
+  }),
+)
+
+it.live("a Code Mode inner call and a renamed call report addedBy of the tool that runs", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const hooks = yield* PluginHooks.Service
+    const tools = yield* Tool.Service
+    const a = yield* PluginHost.make(plugins, "a", installed)
+    const b = yield* PluginHost.make(plugins, "b", { type: "local", path: "/b" })
+    yield* a.tool.transform((editor) => {
+      editor.add(make("inner", { codemode: true }))
+      editor.add(make("direct", { codemode: false }))
+    })
+    yield* b.tool.transform((editor) => editor.update("inner", (tool) => void (tool.description = "wrapped")))
+    const seen: Array<{ tool: string; experimental: unknown }> = []
+    yield* hooks.register("tool", "execute.before", (event) =>
+      Effect.sync(() => void seen.push({ tool: event.tool, experimental: { ...event.experimental } })),
+    )
+    const snapshot = yield* tools.snapshot()
+    yield* snapshot.execute(call("direct"))
+    yield* snapshot.execute(call("execute", { code: 'return await tools.inner({ text: "inner" })' }))
+    expect(seen.find((event) => event.tool === "inner")?.experimental).toEqual({
+      plugin: "b",
+      addedBy: "a",
+      selfChecks: false,
+    })
+    expect(seen.find((event) => event.tool === "direct")?.experimental).toEqual({
+      plugin: "a",
+      addedBy: "a",
+      selfChecks: false,
+    })
+
+    // A hook that renames a call to a built-in tool sees no addedBy afterwards.
+    const core = yield* PluginHost.make(plugins, "core", builtin)
+    yield* core.tool.transform((editor) => editor.add(make("read")))
+    const later: unknown[] = []
+    yield* hooks.register("tool", "execute.before", (event) => Effect.sync(() => void (event.tool = "read")))
+    yield* hooks.register("tool", "execute.before", (event) =>
+      Effect.sync(() => void later.push({ ...event.experimental })),
+    )
+    yield* (yield* tools.snapshot()).execute(call("direct"))
+    expect(later).toEqual([{ selfChecks: false }])
   }),
 )
