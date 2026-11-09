@@ -64,6 +64,9 @@ test.skipIf(process.platform === "win32")(
     expect(await resolve({ OPENCODE_SERVER_PASSWORD: "legacy", OPENCODE_PASSWORD_FILE: file })).toBe("legacy")
     expect(await resolve({ OPENCODE_PASSWORD_FILE: file })).toBe("from-file")
     expect(await resolve({})).toBeUndefined()
+    // An empty variable counts as unset, as in the desktop.
+    expect(await resolve({ OPENCODE_PASSWORD: "", OPENCODE_SERVER_PASSWORD: "legacy" })).toBe("legacy")
+    expect(await resolve({ OPENCODE_PASSWORD: "", OPENCODE_PASSWORD_FILE: file })).toBe("from-file")
     // A plain password never opens the file.
     expect(await resolve({ OPENCODE_PASSWORD: "plain", OPENCODE_PASSWORD_FILE: secret("x", 0o644) })).toBe("plain")
   },
