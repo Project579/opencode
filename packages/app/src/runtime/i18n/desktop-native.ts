@@ -316,6 +316,14 @@ export const DESKTOP_NATIVE_ENGLISH = {
 
   "desktop.contextMenu.spellcheck": "Spellcheck",
   "desktop.contextMenu.spellcheckLanguages": "Spellcheck Languages",
+
+  "desktop.server.explicit.invalid":
+    "OPENCODE_EXPERIMENTAL_DESKTOP_SERVER must be http://127.0.0.1:<port> or http://localhost:<port>",
+  "desktop.server.explicit.unavailable": "The OpenCode server at {{origin}} is not reachable or not ready",
+  "desktop.server.explicit.unauthorized": "The OpenCode server at {{origin}} rejected the password",
+  "desktop.server.explicit.incompatible": "The server at {{origin}} is not a compatible OpenCode server",
+  "desktop.server.explicit.passwordFile":
+    "Cannot use the password file {{path}}: it must be a regular file owned by you and readable only by you",
 } as const
 
 export type DesktopNativeKey = keyof typeof DESKTOP_NATIVE_ENGLISH
