@@ -104,7 +104,9 @@ same lines, re-checked on the worktree base 6aef6aa81e, where they still match.
 - [ ] **Step 1: Install dependencies**
 
 Run from the worktree root, with the preamble: `bun install`
-Expected: exits 0 and `node_modules/` exists.
+Expected: exits 0 and `node_modules/` exists. The install reaches `registry.npmjs.org`, and electron's postinstall
+reaches `github.com` and `objects.githubusercontent.com`. In auto mode, pass those hosts in `allowed_domains`. A refused
+download is the same blocker as in Task 4 Step 8: report it and do not work around it.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -364,6 +366,8 @@ test.each([
   { name: "404", respond: () => new Response(null, { status: 404 }), message: (o: string) => `The server at ${o} is not a compatible OpenCode server` },
   { name: "503", respond: () => new Response(null, { status: 503, headers: { "retry-after": "1" } }), message: (o: string) => `The OpenCode server at ${o} is not reachable or not ready` },
   { name: "500", respond: () => new Response(null, { status: 500 }), message: (o: string) => `The OpenCode server at ${o} is not reachable or not ready` },
+  { name: "502", respond: () => new Response(null, { status: 502 }), message: (o: string) => `The OpenCode server at ${o} is not reachable or not ready` },
+  { name: "504", respond: () => new Response(null, { status: 504 }), message: (o: string) => `The OpenCode server at ${o} is not reachable or not ready` },
   // Review Focus 1: something else listens on the port.
   { name: "200 without version", respond: () => Response.json({}), message: (o: string) => `The server at ${o} is not a compatible OpenCode server` },
   { name: "200 HTML", respond: () => new Response("<html></html>", { headers: { "content-type": "text/html" } }), message: (o: string) => `The server at ${o} is not a compatible OpenCode server` },
@@ -384,9 +388,10 @@ test("connects despite a version mismatch", async () => {
 })
 
 test("an invalid value fails every connect without a request", async () => {
-  const { requests } = stub(() => Response.json({ version: "1.0.0" }))
+  const { origin, requests } = stub(() => Response.json({ version: "1.0.0" }))
   const message = "OPENCODE_EXPERIMENTAL_DESKTOP_SERVER must be http://127.0.0.1:<port> or http://localhost:<port>"
-  expect((await failure({ [SERVER]: "https://127.0.0.1:1" })).message).toBe(message)
+  // Points at the stub, so a bug that accepted the path would reach it.
+  expect((await failure({ [SERVER]: `${origin}/api` })).message).toBe(message)
   expect(requests).toEqual([])
 })
 
@@ -444,10 +449,12 @@ Expected: FAIL with a module resolution error for `./explicit-server`.
   - Otherwise it resolves the password as `server.password ?? (server.passwordFile && readPasswordFile(server.passwordFile))`.
     It calls the reader inside `Effect.try` and maps a `PasswordFileError` to
     `nativeT("desktop.server.explicit.passwordFile", { path })`.
-  - It fetches with `authorization({ url: origin, password }, origin)` as the header (none when it is `undefined`) and
+  - It fetches with `authorization({ url: origin, password: password ?? null }, origin)` as the header (none when it is `undefined`) and
     `signal: AbortSignal.timeout(5_000)`.
-  - Status mapping: 401 is unauthorized. 500, 503, network errors and timeouts are unavailable. Any other non-200 status,
-    and a 200 whose JSON body does not decode as `Schema.Struct({ version: Schema.String })`, are incompatible.
+  - Status mapping: 401 is unauthorized. 500, 502, 503, 504, network errors and timeouts are unavailable. Any other
+    non-200 status is incompatible. So is a 200 whose body is not JSON or does not decode as
+    `Schema.Struct({ version: Schema.String })`. Parse the body separately from the fetch, so that a JSON parse failure
+    maps to incompatible, not unavailable.
   - When `bundled !== undefined && version !== bundled`, it logs
     `Effect.logWarning("explicit server version differs", { origin, version, bundled })` and continues.
   - It returns `{ url: origin, password: password ?? null }`.
@@ -456,7 +463,7 @@ Expected: FAIL with a module resolution error for `./explicit-server`.
 - [ ] **Step 5: Run the tests to confirm they pass, and typecheck both packages**
 
 Run, from `packages/desktop`: `bun test --timeout 30000 src/main/service/explicit-server.test.ts --rerun-each 10 && bun typecheck`
-Run, from `packages/app`: `bun typecheck && bun test src/runtime/i18n/desktop-native.test.ts`
+Run, from `packages/app`: `bun typecheck` (`en.ts:21` spreads `DESKTOP_NATIVE_ENGLISH`, so this covers the key type)
 Expected: all pass on every rerun, and both typechecks exit 0.
 
 - [ ] **Step 6: Commit**
@@ -541,8 +548,8 @@ no further change.
 
 Run, from `packages/desktop`:
 `bun typecheck && bun test --timeout 30000 src/main/service src/main/plugin electron.vite.config.test.ts`
-Expected: typecheck exits 0 and every test passes. The `electron.vite.config.test.ts` case "keeping native dependencies
-external" confirms that `@opencode/util` did not land in `dependencies`. Some suites import `electron`, which needs the
+Expected: typecheck exits 0 and every test passes. Also confirm in `packages/desktop/package.json` that
+`@opencode/util` is under `devDependencies`; no test checks this. Some suites import `electron`, which needs the
 Electron binary. If one fails only because that download is blocked in the sandbox, report it as a blocker and do not
 work around it.
 
@@ -620,5 +627,5 @@ branch, launched through `aursandbox desktop` with `OPENCODE_EXPERIMENTAL_DESKTO
   click Restart: it connects.
 - [ ] CLI: `opencode --server http://127.0.0.1:<port>` with only `OPENCODE_PASSWORD_FILE` set connects. With the file
   chmodded to 0644, it fails with the `OPENCODE_PASSWORD_FILE` message.
-- [ ] The main log has no `Service.ensure`, `cleanStages`, `v2 CLI command started` or `v2 CLI executable staged`
+- [ ] The main log has no `starting v2 background service`, `v2 CLI command started` or `v2 CLI executable staged`
   lines.
