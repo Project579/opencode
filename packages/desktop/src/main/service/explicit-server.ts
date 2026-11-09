@@ -2,7 +2,7 @@ export * as ExplicitServer from "./explicit-server"
 
 // This module must not import `electron`, `../constants` or `@opencode/client/service` (type imports included), so
 // that it loads under plain `bun test` without the Electron binary.
-import { readPasswordFile } from "@opencode/util/password-file"
+import { readPasswordFile, type PasswordFileError } from "@opencode/util/password-file"
 import { Effect, Schema } from "effect"
 import { nativeT } from "../native/translations"
 import { authorization, type Data } from "./sidecar-credentials"
@@ -99,12 +99,15 @@ export const connectExplicit = Effect.fn("ExplicitServer.connect")(function* (
   return { url: origin, password: password ?? null } satisfies Data
 })
 
-// The reader throws only `PasswordFileError`.
+// The reader throws only `PasswordFileError`. The user message stays generic; the log records why the file failed.
 const readPassword = (path: string) =>
   Effect.try({
     try: () => readPasswordFile(path),
-    catch: () => new Error(nativeT("desktop.server.explicit.passwordFile", { path })),
-  })
+    catch: (error) => error as PasswordFileError,
+  }).pipe(
+    Effect.tapError((error) => Effect.logWarning("explicit server password file rejected", { path, reason: error.reason })),
+    Effect.mapError(() => new Error(nativeT("desktop.server.explicit.passwordFile", { path }))),
+  )
 
 function parseOrigin(value: string) {
   if (!URL.canParse(value)) return
