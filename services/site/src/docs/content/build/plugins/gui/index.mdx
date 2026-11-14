@@ -1013,6 +1013,18 @@ ctx.add(Slot, {
   `false`.
 - `session.location.menu` adds items to the project menu, after its location details.
 - `session.panel.end` holds actions at the trailing end of the side region's tab strip.
+- `experimental.session.permission.actions` holds the buttons of the permission prompt above the composer
+  (experimental: may change without compatibility guarantees). Content there replaces the host's Deny, Allow always and
+  Allow once buttons, and the request's description, arguments and resources stay visible. `session` is the routed
+  session, but the request may come from one of its subagent sessions: answer with
+  `ctx.client.permission.reply({ sessionID: input.request.sessionID, requestID: input.request.id, decision })`. The
+  prompt closes when the server reports the request answered.
+- `experimental.session.permission.body` holds the body of that prompt, its description, arguments and resources
+  (experimental: may change without compatibility guarantees). Content there replaces them while the header and
+  buttons stay. It receives the same input as `experimental.session.permission.actions` plus `fallback`. Render
+  `input.fallback()` to show the host's body. A long body grows the prompt up to the window's height, then scrolls.
+  The body is a flex column, so size content by what it holds or give it `flex-shrink: 0`, since an element with a
+  fixed `height` can be squeezed.
 - `order` sorts the items in one slot.
 
 `session.location.menu` receives `shown`, which is `true` while the project menu is open. Subscribe to location data
@@ -1047,6 +1059,17 @@ interface SlotMap {
   "session.header": { screen: SessionScreen; session: MountedSession; active: boolean }
   "session.location.menu": { screen: SessionScreen; session: MountedSession; shown: boolean }
   "session.panel.end": { screen: SessionScreen; session: MountedSession }
+  "experimental.session.permission.actions": {
+    screen: SessionScreen
+    session: MountedSession
+    request: PermissionRequest
+  }
+  "experimental.session.permission.body": {
+    screen: SessionScreen
+    session: MountedSession
+    request: PermissionRequest
+    fallback: () => JSX.Element
+  }
 }
 ```
 

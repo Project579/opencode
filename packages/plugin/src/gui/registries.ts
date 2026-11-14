@@ -1,4 +1,5 @@
 import type { JSX } from "solid-js"
+import type { PermissionRequest } from "@opencode/client/promise"
 import type { IconName } from "./icon-name.js"
 import { Registry } from "./core.js"
 import type { SessionRef, MountedSession, SessionScreen } from "./host-apis.js"
@@ -896,6 +897,48 @@ export interface SlotMap {
     readonly screen: SessionScreen
     /** The routed session; a new object when another session is routed. */
     readonly session: MountedSession
+  }
+  /**
+   * Experimental: may change without compatibility guarantees. The action buttons of the permission prompt above the
+   * composer. Content here replaces the built-in Deny, Allow always and Allow once buttons; without any, the host shows
+   * its buttons. The request's description, arguments and resources stay visible. The host does not answer for you:
+   * send the reply with `ctx.client.permission.reply`, and the prompt closes when the server reports the request
+   * answered.
+   */
+  readonly "experimental.session.permission.actions": {
+    /** The owning session screen; always present. */
+    readonly screen: SessionScreen
+    /**
+     * The routed session; a new object when another session is routed. The request may come from one of its subagent
+     * sessions, so reply with `request.sessionID`, not `session.id`.
+     */
+    readonly session: MountedSession
+    /**
+     * The pending permission request: what is asked (`action`, `resources`), its `id` and the `sessionID` of the
+     * session that asked, which is the one to reply to.
+     */
+    readonly request: PermissionRequest
+  }
+  /**
+   * Experimental: may change without compatibility guarantees. The body of the permission prompt above the composer:
+   * the request's description, arguments and resources. Content here replaces them; the header and the buttons stay
+   * the host's. A long body grows the prompt up to the window's height, then scrolls. The region is a flex column, so
+   * size content by what it holds or give it `flex-shrink: 0`. Render `fallback()` to show the host's own body for the
+   * request, so an item can decline reactively and take the body only while it needs it. Without any item, the host
+   * shows its body.
+   */
+  readonly "experimental.session.permission.body": {
+    /** The owning session screen; always present. */
+    readonly screen: SessionScreen
+    /**
+     * The routed session; a new object when another session is routed. The request may come from one of its subagent
+     * sessions, so reply with `request.sessionID`, not `session.id`.
+     */
+    readonly session: MountedSession
+    /** The pending permission request, as for `experimental.session.permission.actions`. */
+    readonly request: PermissionRequest
+    /** Renders the host's own body for this request. */
+    readonly fallback: () => JSX.Element
   }
 }
 

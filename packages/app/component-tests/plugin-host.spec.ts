@@ -603,6 +603,153 @@ story("ctx.ui renders the app's components in a contribution, a host menu and a 
 })
 
 story(
+  "a plugin that fills experimental.session.permission.actions replaces the dock's buttons and nothing else",
+  async ({ page }) => {
+    const result = await page.evaluate(async (fixture) => {
+      const { mountPermissionDock, until, Slot } = await import(fixture)
+
+      const text = (value: string) => () => Object.assign(document.createElement("p"), { textContent: value })
+
+      const plain = mountPermissionDock({
+        definitions: [{ id: "idle", windowEntry: async () => ({ default: () => {} }) }],
+      })
+      await until(() => !!plain.container.querySelector("[data-slot='permission-footer-actions'] button"))
+      const unclaimed = [...plain.container.querySelectorAll("[data-slot='permission-footer-actions'] button")]
+      unclaimed
+        .find((button) => button.textContent === "Allow once")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+      const fallback = { buttons: unclaimed.map((button) => button.textContent), decided: [...plain.decided] }
+      plain.unmount()
+
+      const claimed = mountPermissionDock({
+        definitions: [
+          {
+            id: "fixture",
+            windowEntry: async () => ({
+              default: (ctx: Context) => {
+                ctx.add(Slot, {
+                  at: "experimental.session.permission.actions",
+                  render: (input: {
+                    readonly screen?: object
+                    readonly session: { readonly id: string }
+                    readonly request: { readonly id: string; readonly sessionID: string }
+                  }) =>
+                    text(
+                      `Plugin actions ${input.request.id} in ${input.session.id} for ${input.request.sessionID} ${input.screen ? "with" : "without"} screen`,
+                    )(),
+                })
+              },
+            }),
+          },
+        ],
+      })
+
+      await until(() => !!claimed.container.textContent?.includes("Plugin actions per_dock"))
+      const replaced = {
+        buttons: claimed.container.querySelectorAll("[data-slot='permission-footer-actions'] button").length,
+        text: claimed.container.textContent,
+        decided: [...claimed.decided],
+      }
+      claimed.unmount()
+
+      return { fallback, replaced }
+    }, fixture)
+
+    expect(result.fallback).toEqual({ buttons: ["Deny", "Allow always", "Allow once"], decided: ["once"] })
+    expect(result.replaced.buttons).toBe(0)
+    expect(result.replaced.text).toContain("Plugin actions per_dock in a for child with screen")
+    expect(result.replaced.text).not.toContain("Allow once")
+    expect(result.replaced.text).toContain("echo hello")
+    expect(result.replaced.decided).toEqual([])
+  },
+)
+
+story(
+  "a plugin that fills experimental.session.permission.body replaces the dock's body in a scroll region, or declines with the fallback",
+  async ({ page }) => {
+    const result = await page.evaluate(async (fixture) => {
+      const { mountPermissionDock, until, Slot } = await import(fixture)
+
+      type Input = { readonly request: { readonly id: string }; readonly fallback: () => Node }
+
+      const body = (render: (input: Input) => Node) => [
+        {
+          id: "fixture",
+          windowEntry: async () => ({
+            default: (ctx: Context) => {
+              ctx.add(Slot, { at: "experimental.session.permission.body", render })
+            },
+          }),
+        },
+      ]
+      const region = (container: HTMLElement) =>
+        container.querySelector<HTMLElement>("[data-slot='permission-content'] > [data-scrollable]")
+      const read = (container: HTMLElement) => {
+        const scroller = region(container)
+        return {
+          text: scroller?.textContent ?? "",
+          buttons: container.querySelectorAll("[data-slot='permission-footer-actions'] button").length,
+          overflows: !!scroller && scroller.scrollHeight > scroller.clientHeight,
+        }
+      }
+
+      const plain = mountPermissionDock({
+        definitions: [{ id: "idle", windowEntry: async () => ({ default: () => {} }) }],
+      })
+      await until(() => !!plain.container.querySelector("[data-slot='permission-footer-actions'] button"))
+      const unclaimed = read(plain.container)
+      plain.unmount()
+
+      // The host's body also shows before the plugin loads, so wait until the plugin has rendered its fallback.
+      const declining = { rendered: false }
+      const declined = mountPermissionDock({
+        definitions: body((input) => {
+          declining.rendered = true
+          return input.fallback()
+        }),
+      })
+      await until(() => declining.rendered)
+      const fallback = read(declined.container)
+      declined.unmount()
+
+      const claimed = mountPermissionDock({
+        definitions: body((input) =>
+          Object.assign(document.createElement("div"), {
+            textContent: `Plugin body ${input.request.id}`,
+            style: "min-height: 4000px",
+          }),
+        ),
+      })
+      await until(() => !!claimed.container.textContent?.includes("Plugin body per_dock"))
+      // A short space above the composer, as on a small window: the dock keeps to it and its body scrolls.
+      claimed.container.style.cssText =
+        "position: fixed; inset: 0 auto auto 0; width: 600px; height: 300px; display: flex; flex-direction: column"
+      const scroller = region(claimed.container)!
+      scroller.scrollTop = 200
+      const footer = claimed.container.querySelector("[data-slot='permission-footer']")!.getBoundingClientRect()
+      const replaced = {
+        ...read(claimed.container),
+        overflow: getComputedStyle(scroller).overflowY,
+        scrolled: scroller.scrollTop > 0,
+        footerVisible: footer.bottom <= 300,
+      }
+      claimed.unmount()
+
+      return { unclaimed, fallback, replaced }
+    }, fixture)
+
+    expect(result.unclaimed.text).toContain("echo hello")
+    expect(result.unclaimed.buttons).toBe(3)
+    // The host's body fits, so the region does not scroll.
+    expect(result.unclaimed.overflows).toBe(false)
+    expect(result.fallback).toEqual(result.unclaimed)
+    expect(result.replaced.text).toBe("Plugin body per_dock")
+    expect(result.replaced.buttons).toBe(3)
+    expect(result.replaced).toMatchObject({ overflow: "auto", overflows: true, scrolled: true, footerVisible: true })
+  },
+)
+
+story(
   "routing A, B, then A again: a kept session stays A, the same screen follows the route, and no render remounts",
   async ({ page }) => {
     const result = await page.evaluate(async (fixture) => {

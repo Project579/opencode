@@ -3,7 +3,7 @@ import type { PermissionRequest } from "@opencode/client"
 import type { TextareaRenderable } from "@opentui/core"
 import { testRender, type JSX } from "@opentui/solid"
 import { expect, test } from "bun:test"
-import { createSignal, onMount } from "solid-js"
+import { createSignal, onMount, type ComponentProps } from "solid-js"
 import { ConfigProvider } from "../../../src/config"
 import { ClientProvider } from "../../../src/context/client"
 import { DataProvider, useData, type FormWithLocation } from "../../../src/context/data"
@@ -12,6 +12,7 @@ import { InteractivityProvider } from "../../../src/context/interactivity"
 import { LocationProvider } from "../../../src/context/location"
 import { ThemeProvider } from "../../../src/context/theme"
 import { FormPrompt, FORM_MODE } from "../../../src/routes/session/form"
+import { PluginContext } from "../../../src/plugin/context"
 import { PermissionPrompt } from "../../../src/routes/session/permission"
 import { DialogProvider } from "../../../src/ui/dialog"
 import { ToastProvider } from "../../../src/ui/toast"
@@ -19,6 +20,13 @@ import { emptyThemeSource, tmpdir } from "../../fixture/fixture"
 import { createApi, createEventStream, createFetch, json } from "../../fixture/tui-client"
 import { TestTuiContexts } from "../../fixture/tui-environment"
 import { createTuiResolvedConfig } from "../../fixture/tui-runtime"
+
+// A plugin context with no claims: the prompt's slots render their own content.
+const unclaimed = {
+  slots: { register: () => () => {}, resolved: () => ({ slotted: new Map() }) },
+  // SAFETY: only the slot registry is read by a mounted `Slot`.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
+} as unknown as ComponentProps<typeof PluginContext.Provider>["value"]
 
 async function mountPanes(root: string, render: () => JSX.Element, parentID?: string) {
   const [active, setActive] = createSignal(false)
@@ -83,7 +91,9 @@ async function mountPanes(root: string, render: () => JSX.Element, parentID?: st
                   <ThemeProvider mode="dark" source={emptyThemeSource}>
                     <ToastProvider>
                       <DialogProvider>
-                        <Panes />
+                        <PluginContext.Provider value={unclaimed}>
+                          <Panes />
+                        </PluginContext.Provider>
                       </DialogProvider>
                     </ToastProvider>
                   </ThemeProvider>

@@ -1,4 +1,4 @@
-import type { PluginInfo, SessionMessageInfo } from "@opencode/client/promise"
+import type { PermissionRequest, PluginInfo, SessionMessageInfo } from "@opencode/client/promise"
 import { DialogProvider, useDialog } from "@opencode/ui/context/dialog"
 import { Menu } from "@opencode/ui/menu"
 import { Toast } from "@opencode/ui/toast"
@@ -38,6 +38,7 @@ import { render } from "solid-js/web"
 import { PlatformProvider, type Platform } from "@/runtime/platform/platform"
 import { Persist, persisted } from "@/runtime/persistence/storage"
 import { ServerScope } from "@/runtime/server/scope"
+import { SessionPermissionDock } from "@/session/requests/session-permission-dock"
 import { PluginHostProvider, usePluginHost, type HostApiFactories, type PluginInput } from "../src/runtime/plugin/host"
 import { createHostApis } from "../src/runtime/plugin/host-apis"
 import type { Bridge, Entry } from "@opencode/plugin/gui/host"
@@ -697,6 +698,72 @@ export function mountSessionRegion(input: {
     /** The session each composer attachment reached, in order. */
     attached,
     status: (id: string) => hosts[0]?.status(id),
+    unmount: () => {
+      dispose()
+      container.remove()
+    },
+  }
+}
+
+/**
+ * Mounts the real host and the real permission dock for one pending request, the way the composer region holds it for
+ * the routed session. `decided` lists the replies the built-in buttons sent.
+ */
+export function mountPermissionDock(input: { definitions: readonly Entry[] }) {
+  const container = document.createElement("div")
+  document.body.appendChild(container)
+  const captured: Captured = {}
+  const decided: string[] = []
+  const request = {
+    id: "per_dock",
+    // A subagent of the routed session "a": the dock shows its subtree's requests.
+    sessionID: "child",
+    action: "shell",
+    resources: ["echo hello"],
+  } satisfies PermissionRequest
+  const value = { key: "fixture\na", id: "a", tab: "a", pending: false, location: { directory: "/repo" }, visit: {} }
+
+  // SAFETY: the dock passes the session through; the test's plugins read only its `id`.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
+  const session = value as unknown as MountedSession
+
+  // SAFETY: the test's plugins only check that the screen is present.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- see SAFETY above
+  const screen = {} as unknown as SessionScreen
+
+  function Dock() {
+    const host = usePluginHost()
+
+    return (
+      <Show when={host.ready()}>
+        <SessionPermissionDock
+          request={request}
+          context={{ session, screen }}
+          responding={false}
+          onDecide={(response) => void decided.push(response)}
+        />
+      </Show>
+    )
+  }
+
+  const dispose = render(
+    () => (
+      <LanguageProvider locale="en">
+        <PlatformProvider value={web}>
+          <DialogProvider>
+            <RealHost definitions={input.definitions} captured={captured}>
+              <Dock />
+            </RealHost>
+          </DialogProvider>
+        </PlatformProvider>
+      </LanguageProvider>
+    ),
+    container,
+  )
+
+  return {
+    container,
+    decided,
     unmount: () => {
       dispose()
       container.remove()

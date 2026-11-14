@@ -1,4 +1,5 @@
 import { createMemo, Show, type JSX } from "solid-js"
+import type { MountedSession, SessionScreen } from "@opencode/plugin/gui"
 import { SessionElicitationDock } from "@/session/requests/session-elicitation-dock"
 import { SessionPermissionDock } from "@/session/requests/session-permission-dock"
 import { SessionQuestionDock } from "@/session/requests/session-question-dock"
@@ -29,6 +30,8 @@ export function SessionComposerRegion(props: {
   above?: JSX.Element
   composer: JSX.Element
   subagent: JSX.Element
+  /** The routed session and its screen, passed to the permission dock's plugin slot. */
+  context?: { readonly session: MountedSession; readonly screen: SessionScreen }
 }) {
   const controller = props.controller
   const settings = useSettings()
@@ -85,6 +88,7 @@ export function SessionComposerRegion(props: {
                   {(request) => (
                     <SessionPermissionDock
                       request={request}
+                      context={props.context}
                       responding={controller.state.permissionResponding()}
                       onDecide={(response) => {
                         controller.onResponseSubmit()
