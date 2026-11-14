@@ -44,6 +44,13 @@ export interface Namespace {
 interface BaseOptions {
   readonly namespace?: string
   readonly permission?: string
+  readonly experimental?: {
+    /**
+     * Experimental: may change without compatibility guarantees. `self: true` declares that the tool checks its own
+     * permissions; permission plugins may use this to apply only a floor instead of asking before every call.
+     */
+    readonly permission?: { readonly self: true }
+  }
 }
 
 export type Options = BaseOptions &

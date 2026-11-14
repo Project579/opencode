@@ -37,7 +37,7 @@ import { WorktreeStrategies } from "../worktree/strategies.js"
 import { Generate } from "../generate.js"
 import { Permission } from "../permission.js"
 import { PluginHooks } from "./hooks.js"
-import type { Interface } from "../plugin.js"
+import type { Generation, Interface } from "../plugin.js"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 
 const mutable = <T>(value: T) => value as DeepMutable<T>
@@ -50,7 +50,16 @@ const isRpcType = (type: string): type is RpcEvent["type"] => type.startsWith("r
 const isRpcEvent = (event: Event.Payload): event is RpcEvent => isRpcType(event.type)
 const isPublicEvent = (event: Event.Payload): event is EventManifest.ServerEvent | RpcEvent =>
   EventManifest.isServer(event) || isRpcEvent(event)
-export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interface, "list">, pluginID: string) {
+/**
+ * `source` defaults to built-in so tests that do not care about attribution can leave it out. Production callers must
+ * pass the plugin's real source: omitting it makes an installed plugin's tools look built-in, which turns off any gate
+ * that keys on `experimental.plugin` or `experimental.addedBy`.
+ */
+export const make = Effect.fn("PluginHost.make")(function* (
+  plugin: Pick<Interface, "list">,
+  pluginID: string,
+  source: NonNullable<Generation["source"]> = { type: "builtin" },
+) {
   const app = yield* App.Service
   const agents = yield* Agent.Service
   const artifacts = yield* Artifact.Service
@@ -102,6 +111,11 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
     Effect.gen(function* () {
       return { location: locationInfo(yield* Location.Service), data: yield* effect }
     }).pipe(Effect.provide(locations.get(ref)))
+
+  // A plugin that is not built in records itself as the owner of the tools it adds or updates; the registry holds the
+  // owner outside the tools, so `execute.before` hooks can tell them from built-in and MCP tools. Updating a built-in
+  // tool makes the plugin its owner: the conservative direction, since the plugin can change what that tool does.
+  const transformTools: typeof tools.transform = source.type === "builtin" ? tools.transform : tools.installed(pluginID)
 
   const sessionPermission = (input: Parameters<Plugin.Context["permission"]["get"]>[0]) =>
     permission
@@ -500,7 +514,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
       hook: (name, callback) => hooks.register("shell", name, callback),
     },
     tool: {
-      transform: tools.transform,
+      transform: transformTools,
       reload: tools.reload,
       list: tools.list,
       hook: (name, callback) => hooks.register("tool", name, callback),

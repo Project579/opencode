@@ -25,6 +25,31 @@ export interface ToolHooks {
     readonly messageID: SessionMessage.ID
     readonly id: Tool.CallID
     input: unknown
+    /**
+     * Experimental: may change without compatibility guarantees. Read-only facts about the tool this call will run,
+     * set by OpenCode and the same for direct calls and Code Mode inner calls. Assigning to or redefining the field
+     * throws, which fails that call.
+     *
+     * `plugin` is the id of the non-built-in plugin (package, local path or SDK) that last added or updated the tool,
+     * and is undefined for built-in and MCP tools. It is the plugin's self-declared id: duplicate ids are rejected and
+     * the first plugin in boot order wins, so a permission plugin should not trust a tool by this id alone.
+     *
+     * `addedBy` is the id of the non-built-in plugin whose `add` created the tool's current registration, and is
+     * undefined when a built-in source or MCP added it. Unlike `plugin`, a later `update` by any source does not change
+     * it, so `plugin: "B"` with `addedBy: "A"` means B updated a tool that A added. A later `add` replaces or clears it,
+     * and `remove` deletes it. It has the same trust limits as `plugin`.
+     *
+     * `selfChecks` is true when the tool sets `options.experimental.permission.self`. `{}`, with no `selfChecks` key,
+     * means the tool is unknown at the time of the call, unlike `{ selfChecks: false }` for a known tool.
+     *
+     * This reports attribution for permission policy, not a boundary between plugins: installed plugins run in-process
+     * and can still rewrite tools through the live objects `get`/`list` return.
+     */
+    readonly experimental?: {
+      readonly plugin?: string
+      readonly addedBy?: string
+      readonly selfChecks?: boolean
+    }
   }
   readonly "execute.after": {
     readonly tool: string
