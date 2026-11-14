@@ -194,9 +194,10 @@ const layer = Layer.effect(
           resources: blocked.map((item) => item.resource),
           message: `Permission denied: ${input.action}. Blocked by configured rule patterns: ${JSON.stringify([...new Set(blocked.map((item) => item.pattern))])}`,
         }
-      const all = [...rules, ...(yield* savedRules())]
-      const effects = input.resources.map((resource) => evaluate(input.action, resource, all).effect)
-      const effect: Permission.Effect = effects.includes("ask") ? "ask" : "allow"
+      const approved = yield* savedRules()
+      const all = [...rules, ...approved]
+      const decided = input.resources.map((resource) => ({ resource, rule: evaluate(input.action, resource, all) }))
+      const effect: Permission.Effect = decided.some((item) => item.rule.effect === "ask") ? "ask" : "allow"
       const event = yield* hooks.trigger("permission", "evaluate", {
         sessionID: input.sessionID,
         agent: input.agent,
@@ -205,6 +206,14 @@ const layer = Layer.effect(
         metadata: input.metadata,
         source: input.source,
         effect,
+        // `evaluate` returns the matching rule itself, or a fresh object when the default `ask` applied.
+        experimental: {
+          rules: decided.map((item) => ({
+            resource: item.resource,
+            effect: item.rule.effect,
+            ...(approved.includes(item.rule) ? { saved: true } : rules.includes(item.rule) ? { rule: item.rule } : {}),
+          })),
+        },
       })
       const unattended = yield* Unattended
       if (event.effect !== "ask" || unattended === undefined)

@@ -1762,6 +1762,18 @@ Permission hooks follow these rules:
 - A hook may change `effect` to `allow`, `ask`, or `deny`.
 - `message` appears in an escalated permission request or becomes the denial reason.
 
+`experimental.rules` says which rule decided each resource. It is experimental and may change without compatibility guarantees.
+
+```ts
+await ctx.permission.hook("evaluate", async (event) => {
+  for (const item of event.experimental?.rules ?? []) {
+    if (item.saved) console.log(`${item.resource}: allowed by a saved approval`)
+    else if (item.rule) console.log(`${item.resource}: ${item.rule.effect} by ${item.rule.action} ${item.rule.resource}`)
+    else console.log(`${item.resource}: no rule matched, so it asks`)
+  }
+})
+```
+
 #### Reference
 
 ```ts
@@ -1774,6 +1786,14 @@ interface PermissionEvaluation {
   readonly source?: { type: "tool"; messageID: string; id: string }
   effect: "allow" | "ask" | "deny"
   message?: string
+  readonly experimental?: {
+    readonly rules: readonly {
+      readonly resource: string
+      readonly effect: "allow" | "ask" | "deny"
+      readonly rule?: { action: string; resource: string; effect: "allow" | "ask" | "deny" }
+      readonly saved?: boolean
+    }[]
+  }
 }
 ```
 

@@ -33,8 +33,8 @@ const it = testEffect(
       SessionStore.node,
       PermissionSaved.node,
       Agent.node,
-      Permission.node,
       PluginHooks.node,
+      Permission.node,
     ]),
     [Location.node.replace(current)],
   ),
@@ -377,6 +377,46 @@ describe("Permission", () => {
         id: Permission.ID.create("per_test"),
         effect: "deny",
       })
+    }),
+  )
+
+  it.effect("tells the evaluate hook which rule decided each resource", () =>
+    Effect.gen(function* () {
+      const allow = { action: "bash", resource: "git *", effect: "allow" } as const
+      yield* setup([allow])
+      const hooks = yield* PluginHooks.Service
+      const seen: Array<ReadonlyArray<unknown>> = []
+      yield* hooks.register("permission", "evaluate", (event) =>
+        Effect.sync(() => {
+          if (event.experimental) seen.push(event.experimental.rules)
+        }),
+      )
+      const service = yield* Permission.Service
+      const ask = (resources: string[]) => service.ask(assertion({ action: "bash", resources }))
+
+      yield* ask(["git status", "rm x"])
+      expect(seen.pop()).toEqual([
+        { resource: "git status", effect: "allow", rule: allow },
+        { resource: "rm x", effect: "ask" },
+      ])
+
+      const saved = yield* PermissionSaved.Service
+      yield* saved.add({ projectID: Project.ID.global, action: "bash", resources: ["rm x"] })
+      yield* ask(["git status", "rm x"])
+      expect(seen.pop()).toEqual([
+        { resource: "git status", effect: "allow", rule: allow },
+        { resource: "rm x", effect: "allow", saved: true },
+      ])
+
+      // Saved approvals are evaluated after configured rules, so they win over a configured ask.
+      yield* setRules([allow, { action: "bash", resource: "rm *", effect: "ask" }])
+      yield* ask(["rm x"])
+      expect(seen.pop()).toEqual([{ resource: "rm x", effect: "allow", saved: true }])
+
+      // Configured denies return before the hook runs.
+      yield* setRules([{ action: "bash", resource: "*", effect: "deny" }])
+      yield* ask(["rm x"])
+      expect(seen).toEqual([])
     }),
   )
 
