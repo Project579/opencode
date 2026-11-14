@@ -257,7 +257,7 @@ describe("WriteTool", () => {
     }),
   )
 
-  it.live("writes an external symlink target with only its in-location permission", () =>
+  it.live("approves an external symlink target before write", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
       ([active, outside]) => {
@@ -277,8 +277,9 @@ describe("WriteTool", () => {
           Effect.andThen((result) =>
             Effect.sync(() => {
               expect(result.status).toBe("completed")
-              expect(fixture.assertions.map((input) => input.action)).toEqual(["edit"])
-              expect(fixture.assertions[0]?.resources).toEqual(["link.txt"])
+              expect(fixture.assertions.map((input) => input.action)).toEqual(["external_directory", "edit"])
+              expect(fixture.assertions[0]?.resources).toEqual([path.join(outside.path, "*").replaceAll("\\", "/")])
+              expect(fixture.assertions[1]?.resources).toEqual([link, target])
             }),
           ),
           Effect.andThen(Effect.promise(() => fs.readFile(target, "utf8"))),

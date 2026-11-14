@@ -544,7 +544,7 @@ describe("ShellTool scanner permissions", () => {
       }),
     ))
 
-  test("a numeric symlink operand still reaches outside without an external-directory prompt", () =>
+  test("a numeric symlink operand that reaches outside hits the external-directory deny", () =>
     withScanner((registry, fixture) =>
       Effect.gen(function* () {
         yield* Effect.promise(() => fs.symlink(fixture.outside, path.join(fixture.active, "123")))
@@ -565,15 +565,8 @@ describe("ShellTool scanner permissions", () => {
           [],
         )
         expect(result.requests).toEqual([])
-        expect(result.exit).toMatchObject({
-          _tag: "Success",
-          value: {
-            status: "completed",
-            metadata: { exit: 0 },
-            content: [{ type: "text", text: `${fixture.outside}\n` }],
-          },
-        })
-        expect(yield* Effect.promise(() => Bun.file(marker).text())).toBe("reached")
+        expect(JSON.stringify(result.exit)).toContain("Permission denied: external_directory")
+        expect(yield* Effect.promise(() => Bun.file(marker).exists())).toBe(false)
       }),
     ))
 
