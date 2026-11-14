@@ -114,11 +114,15 @@ export const baseTranscript = (input: {
   return {
     providerMetadataKey,
     system: [
-      SystemPart.make(
-        input.agent.system
-          ? input.agent.system
-          : SessionSystemPrompt.make(input.tools.definitions.map((tool) => tool.name)),
-      ),
+      {
+        ...SystemPart.make(
+          input.agent.system
+            ? input.agent.system
+            : SessionSystemPrompt.make(input.tools.definitions.map((tool) => tool.name)),
+        ),
+        // Lets providers with their own base prompt, such as Claude Code, find and replace this one.
+        metadata: { experimental: { key: "core/prompt" } },
+      },
       {
         ...SystemPart.make(Instructions.join(input.initial)),
         metadata: { experimental: { instructions: input.initial } },
