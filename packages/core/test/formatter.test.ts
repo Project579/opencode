@@ -1,6 +1,8 @@
+import { mkdtempSync, rmSync } from "fs"
 import fs from "fs/promises"
+import os from "os"
 import path from "path"
-import { describe, expect } from "bun:test"
+import { afterAll, describe, expect } from "bun:test"
 import { Deferred, Effect, Fiber } from "effect"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Bus } from "@opencode/core/bus"
@@ -10,6 +12,7 @@ import { Plugin } from "@opencode/core/plugin"
 import { SdkPlugins } from "@opencode/core/plugin/sdk"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Info } from "@opencode/schema/config"
+import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { Global } from "@opencode/util/global"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Formatter } from "../src/formatter"
@@ -370,6 +373,40 @@ describe("Formatter", () => {
 
         expect(yield* formatter.file(file)).toBe(true)
         expect(yield* Effect.promise(() => fs.readFile(file, "utf8"))).toBe("xAB")
+      }),
+    ),
+  )
+})
+
+describe.skipIf(process.platform === "win32")("Formatter process wrapper", () => {
+  // Existing Formatter tests build the app without a wrapper, so they are the control for this one.
+  const root = mkdtempSync(path.join(os.tmpdir(), "opencode-formatter-wrapper-"))
+  afterAll(() => rmSync(root, { recursive: true, force: true }))
+  const log = path.join(root, "wrapper.log")
+  const wrapped = testEffect(
+    AppNodeBuilder.build(
+      LayerNode.group([Database.node, Bus.node, SdkPlugins.node, LocationServiceMap.node, Global.node]),
+      [
+        Global.node.replace(tempGlobalLayer),
+        offlineModels,
+        CrossSpawnSpawner.node.replace(
+          CrossSpawnSpawner.configured({ wrapper: [path.join(import.meta.dir, "fixture/record-wrapper.sh"), log] }),
+        ),
+      ],
+    ),
+  )
+
+  wrapped.live("runs a configured formatter through the wrapper", () =>
+    withFormatter({ markdown }, (formatter, directory) =>
+      Effect.gen(function* () {
+        const file = path.join(directory, "test.md")
+        yield* Effect.promise(() => fs.writeFile(file, ""))
+        expect(yield* formatter.file(file)).toBe(true)
+        expect(yield* Effect.promise(() => fs.readFile(file, "utf8"))).toBe("md")
+        const logged = (yield* Effect.promise(() => fs.readFile(log, "utf8"))).split("\n").filter(Boolean)
+        expect(logged).toHaveLength(1)
+        expect(logged[0].startsWith(`${process.execPath} -e `)).toBe(true)
+        expect(logged[0].endsWith(` ${file}`)).toBe(true)
       }),
     ),
   )

@@ -2,6 +2,7 @@ import { Database } from "@opencode/core/database/database"
 import { V1Migration } from "@opencode/core/database/v1-migration"
 import { App } from "@opencode/core/app"
 import { LayerNode } from "@opencode/util/effect/layer-node"
+import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { Node } from "@opencode/util/effect/app-node"
 import { fetchLayer, httpClient, httpFetch } from "@opencode/util/effect/app-node-platform"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
@@ -148,6 +149,7 @@ function makeRoutes<AuthError, AuthServices>(
     ),
     InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project: options.config?.project })),
     ShellSelect.node.replace(ShellSelect.configured({ gitbash: options.windows?.gitbash })),
+    CrossSpawnSpawner.node.replace(CrossSpawnSpawner.configured({ wrapper: options.experimental?.process?.wrapper })),
     Mcp.node.replace(
       Mcp.configured({
         clientInfo: {
@@ -164,7 +166,16 @@ function makeRoutes<AuthError, AuthServices>(
       ...(instances ? [Instance.node.replace(instances(() => replacements))] : []),
       ...overrides,
     ]
-    return AppNodeBuilder.build(applicationServices, replacements)
+    // Build on a root memo map. Effect memoizes a Layer by identity, whatever it was provided with, so a node the
+    // host already built (the CLI builds AppProcess before it starts a server) would otherwise be reused here
+    // without these replacements, such as the process wrapper.
+    return Layer.fromBuild((_, scope) =>
+      Layer.buildWithMemoMap(
+        AppNodeBuilder.build(applicationServices, replacements),
+        Layer.makeMemoMapUnsafe(),
+        scope,
+      ).pipe(Effect.map(Context.omit(Layer.CurrentMemoMap))),
+    )
   }
   const serviceLayer = options.simulation
     ? Layer.unwrap(

@@ -135,6 +135,9 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           windows: {
             gitbash: process.env.OPENCODE_GIT_BASH_PATH,
           },
+          experimental: {
+            process: { wrapper: takeProcessWrapper(process.env) },
+          },
           fs: {
             filewatcher: !truthy(process.env.OPENCODE_FILEWATCHER_DISABLE ?? process.env.OPENCODE_DISABLE_FILEWATCHER),
             fff:
@@ -218,6 +221,20 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
 
 function serviceURL(hostname: string, port: number) {
   return `http://${hostname.includes(":") ? `[${hostname}]` : hostname}:${port}`
+}
+
+// Removes the variable so processes the server starts, including a nested `opencode`, do not inherit it and wrap their own children again.
+export function takeProcessWrapper(env: Record<string, string | undefined>) {
+  const raw = env.OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER
+  delete env.OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER
+  return processWrapper(raw)
+}
+
+export function processWrapper(raw: string | undefined) {
+  if (!raw) return undefined
+  const wrapper = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Array(Schema.String)))(raw)
+  if (Option.isNone(wrapper)) throw new Error("OPENCODE_EXPERIMENTAL_PROCESS_WRAPPER must be a JSON array of strings")
+  return wrapper.value.length === 0 ? undefined : wrapper.value
 }
 
 function truthy(value?: string) {
