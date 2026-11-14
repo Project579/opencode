@@ -21,3 +21,40 @@ test("preserves permission roots and self-contained metadata", () => {
     },
   )
 })
+
+test("shows the call's arguments and resources for tools without their own presentation", () => {
+  expect(
+    permissionPresentation({
+      action: "docs_lookup",
+      resources: ["docs/intro"],
+      input: { query: "install", options: { limit: 3 } },
+    }),
+  ).toEqual({
+    icon: "⚙",
+    title: "Call tool docs_lookup",
+    lines: ["Tool: docs_lookup", "query: install", 'options: {"limit":3}', "- docs/intro"],
+  })
+  // A tool-wide request adds nothing beyond the tool name.
+  expect(permissionPresentation({ action: "docs_lookup", resources: ["*"] }).lines).toEqual(["Tool: docs_lookup"])
+})
+
+test("prefers the input the request carries over the tool part it points at", () => {
+  // A nested Code Mode call points at the outer `execute` part, whose input is the script.
+  expect(
+    permissionPresentation({
+      action: "mymcp_search",
+      resources: ["*"],
+      metadata: { input: { query: "releases" } },
+      input: { code: "await tools.mymcp.search({ query: 'releases' })" },
+    }).lines,
+  ).toEqual(["Tool: mymcp_search", "query: releases"])
+})
+
+test("shortens long arguments and caps how many are shown", () => {
+  const input = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`key${index}`, "x".repeat(300)]))
+  const lines = permissionPresentation({ action: "bulk", resources: ["*"], input }).lines
+  expect(lines).toHaveLength(9)
+  expect(lines[1]).toHaveLength(160)
+  expect(lines[1]!.endsWith("…")).toBe(true)
+  expect(lines[8]).toBe("… 3 more")
+})

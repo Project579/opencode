@@ -25,7 +25,10 @@ export function permissionPresentation(
   formatPath: (value: string) => string = (value) => value,
 ): PermissionPresentation {
   const action = canonicalToolName(source.action)
-  const input = normalizeInput(action, source.input)
+  const requested = dict(source.metadata).input
+  // A request that carries its call input is authoritative: a nested Code Mode call's source points at the outer
+  // `execute` part, whose input is the script rather than this tool's arguments.
+  const input = normalizeInput(action, isDict(requested) ? requested : source.input)
   const metadata = { ...dict(source.toolMetadata), ...dict(source.metadata) }
   const resources = source.resources.filter((item): item is string => typeof item === "string")
 
@@ -139,8 +142,26 @@ export function permissionPresentation(
   return {
     icon: "⚙",
     title: `Call tool ${source.action}`,
-    lines: [`Tool: ${source.action}`],
+    lines: [
+      `Tool: ${source.action}`,
+      ...inputLines(input),
+      ...resources.filter((item) => item !== "*").map((item) => `- ${item}`),
+    ],
   }
+}
+
+const INPUT_LINES = 8
+const INPUT_VALUE_LENGTH = 160
+
+// The user approves these arguments, so show each one, shortened to keep the prompt readable.
+function inputLines(input: Dict) {
+  const entries = Object.entries(input).map(([key, value]) => {
+    const shown = typeof value === "string" ? value : JSON.stringify(value)
+    const line = `${key}: ${shown}`.replace(/\s+/g, " ")
+    return line.length > INPUT_VALUE_LENGTH ? `${line.slice(0, INPUT_VALUE_LENGTH - 1)}…` : line
+  })
+  if (entries.length <= INPUT_LINES) return entries
+  return [...entries.slice(0, INPUT_LINES - 1), `… ${entries.length - INPUT_LINES + 1} more`]
 }
 
 function wildcardDirectory(value: string) {
@@ -179,8 +200,11 @@ function normalizeInput(action: string, value: unknown): Dict {
 }
 
 function dict(value: unknown): Dict {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  return value as Dict
+  return isDict(value) ? value : {}
+}
+
+function isDict(value: unknown): value is Dict {
+  return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
 function text(value: unknown) {
