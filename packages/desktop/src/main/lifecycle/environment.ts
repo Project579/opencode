@@ -3,6 +3,7 @@ import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import { app } from "electron"
 import { Effect, Path } from "effect"
 import { DesktopPaths } from "../paths"
+import { ExplicitServer } from "../service/explicit-server"
 import { getUserShell, loadShellEnv } from "../service/shell-env"
 import { registerRendererProtocol, setDockIcon, setProtocolReporter } from "../windows"
 import { scoped } from "../native/logging"
@@ -47,7 +48,7 @@ export const preferApplicationEnvironment = Effect.gen(function* () {
   yield* Effect.sync(() => {
     if (!shellEnv?.XDG_STATE_HOME) delete process.env.XDG_STATE_HOME
     Object.assign(process.env, {
-      ...shellEnv,
+      ...(shellEnv ? ExplicitServer.shellOverrides(shellEnv) : {}),
       OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
       OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
       OPENCODE_CLIENT: "desktop",
