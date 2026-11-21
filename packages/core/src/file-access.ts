@@ -47,6 +47,8 @@ export interface Target {
   readonly absolute: AbsolutePath
   /** Location-relative for internal paths, absolute for external paths. */
   readonly resource: string
+  /** The resources permission rules match: the written path and its symlink-resolved real path. */
+  readonly ruleResources: readonly string[]
   readonly externalDirectory?: ExternalDirectoryAuthorization
   /** Where the target lives. Tools act on the target through this, not through a captured Environment. */
   readonly environment: Environment.Interface
@@ -187,34 +189,65 @@ const layer = Layer.effect(
       return yield* place(text, base, enabled)
     })
 
+    const fsutil = yield* FSUtil.Service
+
+    /**
+     * Resolve symlinks in the longest existing prefix of `absolute`, keeping the not-yet-existing
+     * tail lexical, so a link cannot change which file the permission rules are matched against.
+     */
+    const resolveReal = Effect.fn("FileAccess.resolveReal")(function* (absolute: string) {
+      const missing: string[] = []
+      let current = absolute
+      while (true) {
+        // existsSafe follows the final symlink: a dangling link counts as
+        // missing, so the walk stops at its parent and realpath resolves the rest.
+        const found = yield* fsutil.existsSafe(current)
+        if (found) break
+        const parent = path.dirname(current)
+        if (parent === current) break
+        missing.unshift(path.basename(current))
+        current = parent
+      }
+      const real = yield* fsutil.resolve(current)
+      return missing.length === 0 ? real : path.join(real, ...missing)
+    })
+
     const resolve = Effect.fn("FileAccess.resolve")(function* (input: ResolveInput) {
       const enabled = yield* flags.enabled("machines")
       const located = yield* place(input.path, input.base, enabled)
       // A machine path is another machine's absolute path: it is never internal to this Location and never this server's.
       if (located.environment.id !== environment.id) return yield* machineTarget(located, input.kind)
       const absolute = located.absolute
+      const real = yield* resolveReal(absolute)
       const worktree = path.resolve(location.project.directory)
       const internal =
-        FSUtil.contains(location.directory, absolute) ||
-        (worktree !== path.parse(worktree).root && FSUtil.contains(worktree, absolute))
+        FSUtil.contains(location.directory, real) ||
+        (worktree !== path.parse(worktree).root && FSUtil.contains(worktree, real))
       if (internal) {
         const relative = slash(path.relative(location.directory, absolute) || ".")
+        const realRelative = slash(path.relative(location.directory, real) || ".")
+        // With machines on, a local folder can be named like a machine path; `./` keeps its permission name its own.
+        const named = (value: string) => (enabled && MachinePath.parse(value) ? `./${value}` : value)
+        const resource = named(relative)
         return {
           absolute,
-          // With machines on, a local folder can be named like a machine path; `./` keeps its permission name its own.
-          resource: enabled && MachinePath.parse(relative) ? `./${relative}` : relative,
+          resource,
+          ruleResources: Array.dedupe([resource, named(realRelative)]),
           environment,
         } satisfies Target
       }
+      // #58638: 类型判定与 external 目录都取 symlink 解析后的 real 路径，
+      // 避免 junction/symlink 指向的目标绕过 external_directory 规则。
       const type =
         input.kind ??
-        (yield* Environment.typeFollowing(environment.files, absolute).pipe(
+        (yield* Environment.typeFollowing(environment.files, real).pipe(
           Effect.catchTag("Environment.NotFound", () => Effect.undefined),
         ))
-      const directory = AbsolutePath.make(type === "directory" ? absolute : path.dirname(absolute))
+      const directory = AbsolutePath.make(type === "directory" ? real : path.dirname(real))
       return {
         absolute,
         resource: slash(absolute),
+        ruleResources: Array.dedupe([slash(absolute), slash(real)]),
         externalDirectory: {
           action: "external_directory",
           directory,
@@ -242,6 +275,8 @@ const layer = Layer.effect(
       return {
         absolute: place.absolute,
         resource: `${prefix}${place.absolute}`,
+        // Links on another machine are not resolved here; its rules match the typed path only.
+        ruleResources: [`${prefix}${place.absolute}`],
         externalDirectory: {
           action: "external_directory",
           directory,
@@ -291,7 +326,7 @@ const layer = Layer.effect(
       if (!sibling) yield* authorizeExternal([target], context)
       yield* permission.assert({
         action: "read",
-        resources: [target.resource],
+        resources: target.ruleResources,
         save: [always(target)],
         ...Permission.invocation(context),
       })
@@ -305,5 +340,5 @@ const layer = Layer.effect(
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Environment.node, Flag.node, Location.node, Machines.node, Permission.node],
+  deps: [Environment.node, Flag.node, Location.node, Machines.node, Permission.node, FSUtil.node],
 })
