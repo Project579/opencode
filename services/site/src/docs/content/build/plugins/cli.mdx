@@ -518,7 +518,8 @@ context.keymap.layer(() => ({
 ## Slots
 
 Slots insert or replace JSX at `app`, `home.footer`, `home.footer.status`, `prompt.footer`, `prompt.footer.status`,
-`prompt.footer.file`, `session.composer.top`, `sidebar.content`, or `sidebar.footer`.
+`prompt.footer.file`, `session.composer.top`, `sidebar.content`, `sidebar.footer`,
+`experimental.session.permission.body`, or `experimental.session.permission.options`.
 
 ```tsx
 return context.ui.slot({
@@ -535,6 +536,40 @@ context.ui.slot({ append: "home.footer", render: () => <text>After footer conten
 context.ui.slot({ before: "home.footer", render: () => <text>Before footer slot</text> })
 context.ui.slot({ after: "home.footer", render: () => <text>After footer slot</text> })
 context.ui.slot({ replace: "home.footer", render: () => <text>New footer</text> })
+```
+
+`experimental.session.permission.options` is the choices row of a permission prompt (experimental: may change without
+compatibility guarantees). It receives `sessionID` and `requestID`. A `replace` claim swaps the built-in options and
+their keys while the request's header and body stay visible, so the claim owns the keys and answers with
+`context.client.permission.reply`. Keys the claim does not bind reach the session and app bindings, so Escape no
+longer rejects the request. Ctrl+C still rejects it, and the fullscreen key still toggles the prompt.
+
+```tsx
+context.ui.slot({
+  replace: "experimental.session.permission.options",
+  render: ({ sessionID, requestID }) => <PermissionChoices sessionID={sessionID} requestID={requestID} />,
+})
+```
+
+`experimental.session.permission.body` is the body of a permission prompt, below its header (experimental: may change
+without compatibility guarantees). It receives `sessionID`, `requestID` and `fallback`. A `replace` claim swaps only
+the body, and the header, options and keys stay the host's. Render `fallback()` to show the host's body, so the claim
+can step aside whenever it has nothing to show.
+
+- The docked prompt is about 15 rows tall and clips a longer body. The fullscreen key shows the rest.
+- Toggling fullscreen remounts the claim, so keep its state outside `render`.
+- The fullscreen hint is part of the options row, so it disappears while a plugin claims the options. The key still
+  works.
+
+```tsx
+context.ui.slot({
+  replace: "experimental.session.permission.body",
+  render: (input) => (
+    <Show when={editing()} fallback={input.fallback()}>
+      <AlwaysForm sessionID={input.sessionID} requestID={input.requestID} />
+    </Show>
+  ),
+})
 ```
 
 Use `home.footer.status` to add content to the built-in footer row without replacing it. Status contributions appear
