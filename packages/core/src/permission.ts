@@ -227,16 +227,18 @@ const layer = Layer.effect(
       const all = [...rules, ...approved]
       const decided = input.resources.map((resource) => ({ resource, rule: evaluate(input.action, resource, all) }))
       const effect: Permission.Effect = decided.some((item) => item.rule.effect === "ask") ? "ask" : "allow"
+      const placed = row(input.source)
       const event = yield* hooks.trigger("permission", "evaluate", {
         sessionID: input.sessionID,
         agent: input.agent,
         action: input.action,
         resources: input.resources,
         metadata: input.metadata,
-        ...row(input.source),
+        source: placed.source,
         effect,
         // `evaluate` returns the matching rule itself, or a fresh object when the default `ask` applied.
         experimental: {
+          ...placed.experimental,
           rules: decided.map((item) => ({
             resource: item.resource,
             effect: item.rule.effect,

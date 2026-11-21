@@ -596,7 +596,7 @@ describe("Permission", () => {
         undefined,
         undefined,
       ])
-      expect(evaluated.map((item) => item.experimental)).toEqual([{ call: "call_child" }, undefined, undefined])
+      expect(evaluated.map((item) => item.experimental?.call)).toEqual(["call_child", undefined, undefined])
       expect(asked.map((item) => item.experimental)).toEqual([{ call: "call_child" }, undefined, undefined])
     }),
   )

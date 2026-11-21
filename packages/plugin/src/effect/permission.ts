@@ -14,18 +14,17 @@ export interface PermissionEvaluation {
   readonly resources: ReadonlyArray<string>
   readonly metadata?: Record<string, unknown>
   readonly source?: Permission.Source
-  /** Experimental: may change without compatibility guarantees. See `Permission.Request`. */
-  readonly experimental?: Permission.Request["experimental"]
   effect: Permission.Effect
   message?: string
-  /**
-   * Experimental: may change without compatibility guarantees.
-   *
-   * Which rule decided each resource, in the order of `resources`: the last configured rule that matched
-   * (`rule`), or `saved: true` when a saved approval matched last. Neither is set when no rule matched and
-   * the default `ask` applied. Configured denies end the evaluation before the hook runs, so none appear here.
-   */
+  /** Experimental: may change without compatibility guarantees. */
   readonly experimental?: {
+    /** The ID of the inner call that made the request when `source` names its parent call. See `Permission.Request`. */
+    readonly call?: string
+    /**
+     * Which rule decided each resource, in the order of `resources`: the last configured rule that matched
+     * (`rule`), or `saved: true` when a saved approval matched last. Neither is set when no rule matched and
+     * the default `ask` applied. Configured denies end the evaluation before the hook runs, so none appear here.
+     */
     readonly rules: ReadonlyArray<{
       readonly resource: string
       readonly effect: Permission.Effect
