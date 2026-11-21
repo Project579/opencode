@@ -2,15 +2,18 @@ export * as DesktopCli from "./desktop-cli"
 
 import { execFile, spawn } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { app } from "electron"
 import { Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect"
 import installer from "../../../../../install?raw"
+import { VERSION } from "../constants"
 import { DesktopPaths } from "../paths"
 import { BUNDLED_CLI_VERSION_KEY } from "../storage/keys"
 import { getStore } from "../storage/store"
 import { parseCliVersion, stageName } from "./cli-version"
 import { DesktopCliState } from "./desktop-cli-state"
+import { ExplicitServer } from "./explicit-server"
 
 const execFileAsync = promisify(execFile)
 
@@ -88,6 +91,9 @@ const resolveBundledCli = Effect.fn("DesktopCli.resolveBundled")(function* (isol
     : path.join(paths.developmentResourcesRoot, isolated ? developmentExecutableName() : executableName())
 
   yield* Effect.logInfo("v2 CLI executable resolved", { bundled, packaged: app.isPackaged })
+  // An explicit server never runs this CLI: no `--version` spawn and no stage copy.
+  if (ExplicitServer.configured())
+    return { version: shippedVersion(bundled) || VERSION, binary: bundled, command: [bundled] }
   const version = yield* bundledVersion(bundled)
   const binary = app.isPackaged || isolated ? yield* installCli(bundled, version) : bundled
 
@@ -100,17 +106,10 @@ const resolveBundledCli = Effect.fn("DesktopCli.resolveBundled")(function* (isol
 // covers executables that arrived without that file.
 const bundledVersion = Effect.fn("DesktopCli.bundledVersion")(function* (bundled: string) {
   const fs = yield* FileSystem.FileSystem
-  const path = yield* Path.Path
 
   // Synchronous on purpose: this sits on the path to the first window's IPC port, and a queued
   // async read waits behind everything else the main thread is doing at that moment.
-  const shipped = yield* Effect.sync(() => {
-    try {
-      return readFileSync(path.join(path.dirname(bundled), "opencode-cli.version"), "utf8").trim()
-    } catch {
-      return ""
-    }
-  })
+  const shipped = yield* Effect.sync(() => shippedVersion(bundled))
 
   if (shipped) {
     yield* Effect.logInfo("v2 CLI version bundled", { version: shipped })
@@ -136,6 +135,14 @@ const bundledVersion = Effect.fn("DesktopCli.bundledVersion")(function* (bundled
 
   return version
 })
+
+function shippedVersion(bundled: string) {
+  try {
+    return readFileSync(join(dirname(bundled), "opencode-cli.version"), "utf8").trim()
+  } catch {
+    return ""
+  }
+}
 
 const VersionCache = Schema.Struct({ path: Schema.String, identity: Schema.String, version: Schema.String })
 

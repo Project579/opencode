@@ -3,6 +3,7 @@ import path from "node:path"
 import { app } from "electron"
 import type { Endpoint } from "@opencode/client/service"
 import { CHANNEL } from "../constants"
+import { ExplicitServer } from "./explicit-server"
 
 // The main thread idles between showing the first window and evaluating the main bundle, waiting
 // for the renderer's asset requests. That slot is long enough to find out whether a compatible
@@ -12,6 +13,7 @@ import { CHANNEL } from "../constants"
 let probe: Promise<Endpoint | undefined> | undefined
 
 export function startSidecarProbe() {
+  if (ExplicitServer.configured()) return
   if (!app.isPackaged) return
   const version = CHANNEL === "beta" ? undefined : bundledVersion()
 
@@ -27,7 +29,7 @@ export function takeSidecarProbe() {
   return result
 }
 
-function bundledVersion() {
+export function bundledVersion() {
   try {
     return readFileSync(path.join(process.resourcesPath, "opencode-cli.version"), "utf8").trim()
   } catch {

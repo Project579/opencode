@@ -259,6 +259,8 @@ export const make = Effect.fn("BackgroundServiceMachine.make")(function* (input:
   readonly ensure: (mode: ConnectMode) => Effect.Effect<Data, unknown>
   /** Called when the active service changes. */
   readonly publish: (data: Data) => void
+  /** Log message for a failed connect; defaults to the managed service's. */
+  readonly failureLabel?: string
 }) {
   const fibers = yield* FiberSet.make()
   const run = yield* FiberSet.runtime(fibers)()
@@ -285,7 +287,7 @@ export const make = Effect.fn("BackgroundServiceMachine.make")(function* (input:
           const error = Cause.squash(exit.cause)
           const event = failed(error instanceof Error ? error : new Error(String(error)))
 
-          return Effect.logError("v2 CLI background service failed", { event }).pipe(
+          return Effect.logError(input.failureLabel ?? "v2 CLI background service failed", { event }).pipe(
             Effect.andThen(Effect.sync(() => dispatch(event))),
           )
         }),
