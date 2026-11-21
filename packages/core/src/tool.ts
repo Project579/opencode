@@ -52,11 +52,19 @@ export interface Editor {
   readonly remove: (id: string) => void
 }
 
+// What the state builds per rebuild; `as` makes the plugin-facing editor for one owner and is never handed to plugins.
+type Owned = { readonly as: (owner?: string) => Editor }
+
 type Data = {
   tools: Map<string, RegisteredTool>
   // Converted once at registration; schemas cannot change without re-registering the tool.
   definitions: Map<string, ToolDefinition>
   namespaces: Map<string, Tool.Namespace>
+  // `owners` and `addedBy` are written only through `Interface.installed`, never through the plugin-facing editor or
+  // the stored tools.
+  owners: Map<string, string>
+  // The installed plugin whose `add` created the current registration; unlike `owners`, an update does not change it.
+  addedBy: Map<string, string>
   errors: { kind: "tool" | "namespace"; name: string; namespace?: string; error: RegistrationError }[]
 }
 
@@ -75,6 +83,12 @@ export interface SnapshotOptions {
 }
 
 export interface Interface extends State.Transformable<Editor> {
+  /**
+   * Like `transform`, but every tool the callback adds or updates records `owner` as the installed plugin that provided
+   * it, and an add replaces any earlier owner and `addedBy`. Only the plugin host calls this; plugins have no other way
+   * to write it.
+   */
+  readonly installed: (owner: string) => State.Transform<Editor>
   readonly list: () => Effect.Effect<ReadonlyArray<RegisteredTool>>
   readonly codeModeTools: (paths: ReadonlyArray<string>) => Effect.Effect<ReadonlyMap<string, RegisteredTool>>
   readonly snapshot: (permissions?: Permission.Ruleset, options?: SnapshotOptions) => Effect.Effect<Snapshot>
@@ -156,8 +170,18 @@ const layer = Layer.effect(
       ]
     })
 
-    const beforeExecute = (name: string, info: Tool.Info | undefined, input: unknown, context: Tool.Context) =>
-      hooks.trigger("tool", "execute.before", {
+    // `target` finds the id of the tool the call will run. `experimental` reads the event's current `tool`, so a hook that
+    // renames the call is told about the tool that actually runs. It is a non-configurable getter without a setter that
+    // returns a fresh frozen object, so a hook cannot change what later hooks see, and core never reads it back.
+    const beforeExecute = (
+      data: Data,
+      name: string,
+      info: Tool.Info | undefined,
+      input: unknown,
+      context: Tool.Context,
+      target: (name: string) => string | undefined,
+    ) => {
+      const event: PluginHooks.Domains["tool"]["execute.before"] = {
         tool: name,
         ...(info === undefined ? {} : { info }),
         codemode: context.codemode === true,
@@ -166,7 +190,14 @@ const layer = Layer.effect(
         messageID: context.messageID,
         id: context.id,
         input,
+      }
+      Object.defineProperty(event, "experimental", {
+        get: () => experimental(data, target(event.tool)),
+        enumerable: true,
+        configurable: false,
       })
+      return hooks.trigger("tool", "execute.before", event)
+    }
 
     const executeTool = Effect.fn("Tool.execute")(function* (
       tool: Tool.Info,
@@ -222,14 +253,18 @@ const layer = Layer.effect(
     })
 
     // A plugin may rename a call in a Code Mode program, as it may a direct call, to another of the program's tools.
+    // `tools` is keyed by registry id, so a renamed call reports the owner of the program tool that runs.
     const run = Effect.fnUntraced(function* (
+      data: Data,
       tools: ReadonlyMap<string, Tool.Info>,
       tool: Tool.Info,
       name: string,
       input: unknown,
       context: Tool.Context,
     ) {
-      const event = yield* beforeExecute(name, tool, input, context)
+      const event = yield* beforeExecute(data, name, tool, input, context, (called) =>
+        tools.has(called) ? called : undefined,
+      )
       const selected = event.tool === name ? tool : tools.get(event.tool)
       if (!selected) return yield* new Tool.Error({ message: `Tool is not available for this request: ${event.tool}` })
       return yield* executeTool(selected, event.tool, event.input, context)
@@ -242,48 +277,65 @@ const layer = Layer.effect(
     }
     let catalogData: Data | undefined
     const catalogs = new Map<string, CachedCatalog>()
-    const state = State.create<Data, Editor>({
+    const state = State.create<Data, Owned>({
       name: "tool",
       initial: () => ({
         tools: new Map(),
         definitions: new Map(),
         namespaces: new Map(),
+        owners: new Map(),
+        addedBy: new Map(),
         errors: [],
       }),
-      editor: (editor) => ({
-        list: () => Array.from(editor.tools.values()),
-        get: (id) => editor.tools.get(id),
-        namespace: (namespace) => {
-          const error = namespaceError(namespace.name)
-          if (error) {
-            editor.errors.push({ kind: "namespace", name: namespace.name, namespace: namespace.name, error })
-            return
-          }
-          editor.namespaces.set(namespace.name, { ...namespace })
-        },
-        add: (tool) => {
-          const id = effectiveName(tool)
-          commit(editor, id, { ...tool, id })
-        },
-        update: (id, update) => {
-          const current = editor.tools.get(id)
-          if (!current) return
-          const draft: Types.Mutable<RegisteredTool> = {
-            ...current,
-            options: cloneOptions(current.options),
-          }
-          update(draft)
-          draft.name = current.name
-          draft.id = id
-          if (draft.options?.namespace !== current.options?.namespace)
-            draft.options = { ...draft.options, namespace: current.options?.namespace }
-          commit(editor, id, draft)
-        },
-        remove: (id) => {
-          editor.tools.delete(id)
-          editor.definitions.delete(id)
-        },
-      }),
+      editor: (editor) => {
+        // The owner is fixed when the editor is made, so an editor a plugin keeps still records the same owner. A change
+        // by a built-in source (no owner) leaves an existing owner alone; adding over a tool clears it.
+        const as = (owner?: string): Editor => ({
+          list: () => Array.from(editor.tools.values()),
+          get: (id) => editor.tools.get(id),
+          namespace: (namespace) => {
+            const error = namespaceError(namespace.name)
+            if (error) {
+              editor.errors.push({ kind: "namespace", name: namespace.name, namespace: namespace.name, error })
+              return
+            }
+            editor.namespaces.set(namespace.name, { ...namespace })
+          },
+          add: (tool) => {
+            const id = effectiveName(tool)
+            if (!commit(editor, id, { ...tool, id })) return
+            if (owner === undefined) {
+              editor.owners.delete(id)
+              editor.addedBy.delete(id)
+              return
+            }
+            editor.owners.set(id, owner)
+            editor.addedBy.set(id, owner)
+          },
+          update: (id, update) => {
+            const current = editor.tools.get(id)
+            if (!current) return
+            const draft: Types.Mutable<RegisteredTool> = {
+              ...current,
+              options: cloneOptions(current.options),
+            }
+            update(draft)
+            draft.name = current.name
+            draft.id = id
+            if (draft.options?.namespace !== current.options?.namespace)
+              draft.options = { ...draft.options, namespace: current.options?.namespace }
+            if (!commit(editor, id, draft) || owner === undefined) return
+            editor.owners.set(id, owner)
+          },
+          remove: (id) => {
+            editor.tools.delete(id)
+            editor.definitions.delete(id)
+            editor.owners.delete(id)
+            editor.addedBy.delete(id)
+          },
+        })
+        return { as }
+      },
       notify: (value) => {
         catalogData = undefined
         catalogs.clear()
@@ -301,7 +353,8 @@ const layer = Layer.effect(
     })
 
     return Service.of({
-      transform: state.transform,
+      transform: (callback) => state.transform((editor) => callback(editor.as())),
+      installed: (owner) => (callback) => state.transform((editor) => callback(editor.as(owner))),
       reload: state.reload,
       list: () => Effect.sync(() => Array.from(state.get().tools.values())),
       codeModeTools: (paths) => Effect.sync(() => new Map(codeModeTools(state.get().tools, paths))),
@@ -347,7 +400,7 @@ const layer = Layer.effect(
                 }
                 const tool = CodeModeTool.create(
                   inventory,
-                  (name, item, input, context) => run(inventory.tools, item, name, input, context),
+                  (name, item, input, context) => run(data, inventory.tools, item, name, input, context),
                   permission,
                   full ? options.services : undefined,
                 )
@@ -384,7 +437,17 @@ const layer = Layer.effect(
               }
               const initialName = input.definitions?.get(input.call.name)?.name ?? input.call.name
               const initial = initialName === "execute" && codemode ? codemode.tool : direct.get(initialName)
-              const event = yield* beforeExecute(input.call.name, initial, input.call.input, context)
+              const event = yield* beforeExecute(
+                data,
+                input.call.name,
+                initial,
+                input.call.input,
+                context,
+                (called) => {
+                  const id = input.definitions?.get(called)?.name ?? called
+                  return direct.has(id) ? id : undefined
+                },
+              )
               const requested = input.definitions?.get(event.tool)
               // Preserve session context removal and alias resolution, now after the repair hook.
               if (!requested && input.definitions && (direct.has(event.tool) || codemode?.tool.name === event.tool))
@@ -438,13 +501,25 @@ const layer = Layer.effect(
                 id: Tool.CallID.make(`call_${input.context.messageID}_${index}`),
                 codemode: true,
               }
-              return yield* run(tools, tool, name, toolInput, context)
+              return yield* run(data, tools, tool, name, toolInput, context)
             }),
         )
       }),
     })
   }),
 )
+
+function experimental(data: Data, id: string | undefined) {
+  const tool = id === undefined ? undefined : data.tools.get(id)
+  if (id === undefined || tool === undefined) return Object.freeze({})
+  const plugin = data.owners.get(id)
+  const addedBy = data.addedBy.get(id)
+  return Object.freeze({
+    ...(plugin === undefined ? {} : { plugin }),
+    ...(addedBy === undefined ? {} : { addedBy }),
+    selfChecks: tool.options?.experimental?.permission?.self === true,
+  })
+}
 
 const cloneOptions = (options: Tool.Options | undefined): Tool.Options | undefined =>
   options && {
@@ -468,10 +543,11 @@ function commit(editor: Data, id: string, input: RegisteredTool) {
       namespace: tool.options?.namespace,
       error: registered.failure,
     })
-    return
+    return false
   }
   editor.tools.set(id, tool)
   editor.definitions.set(id, registered.success)
+  return true
 }
 
 function* codeModeTools(registered: Data["tools"], paths: ReadonlyArray<string>) {
