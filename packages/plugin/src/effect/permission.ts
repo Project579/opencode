@@ -16,6 +16,21 @@ export interface PermissionEvaluation {
   readonly source?: Permission.Source
   effect: Permission.Effect
   message?: string
+  /**
+   * Experimental: may change without compatibility guarantees.
+   *
+   * Which rule decided each resource, in the order of `resources`: the last configured rule that matched
+   * (`rule`), or `saved: true` when a saved approval matched last. Neither is set when no rule matched and
+   * the default `ask` applied. Configured denies end the evaluation before the hook runs, so none appear here.
+   */
+  readonly experimental?: {
+    readonly rules: ReadonlyArray<{
+      readonly resource: string
+      readonly effect: Permission.Effect
+      readonly rule?: Permission.Rule
+      readonly saved?: boolean
+    }>
+  }
 }
 
 export interface PermissionHooks {
