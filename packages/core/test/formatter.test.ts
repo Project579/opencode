@@ -410,7 +410,7 @@ describe.skipIf(process.platform === "win32")("Formatter process wrapper", () =>
       Effect.gen(function* () {
         const file = path.join(directory, "test.md")
         yield* Effect.promise(() => fs.writeFile(file, ""))
-        expect(yield* formatter.file(file)).toBe(true)
+        expect(yield* format(formatter, file)).toBe(true)
         expect(yield* Effect.promise(() => fs.readFile(file, "utf8"))).toBe("md")
         const logged = (yield* Effect.promise(() => fs.readFile(log, "utf8"))).split("\n").filter(Boolean)
         expect(logged).toHaveLength(1)
