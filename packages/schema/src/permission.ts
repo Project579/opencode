@@ -31,6 +31,11 @@ const RequestFields = {
   metadata: Schema.Record(Schema.String, Schema.Unknown).pipe(optional),
   source: Source.pipe(optional),
   message: Schema.String.pipe(optional),
+  /**
+   * Experimental: may change without compatibility guarantees. `call` is the ID of the inner call that made the
+   * request, set when `source` names its parent call instead, such as a call inside a Code Mode program.
+   */
+  experimental: Schema.Struct({ call: Schema.String.pipe(optional) }).pipe(optional),
 }
 
 export const Request = Schema.Struct({

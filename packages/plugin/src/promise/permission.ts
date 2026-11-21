@@ -12,6 +12,8 @@ export interface PermissionEvaluation {
   readonly resources: ReadonlyArray<string>
   readonly metadata?: Record<string, unknown>
   readonly source?: Permission.Source
+  /** Experimental: may change without compatibility guarantees. See `Permission.Request`. */
+  readonly experimental?: Permission.Request["experimental"]
   effect: Permission.Effect
   message?: string
 }

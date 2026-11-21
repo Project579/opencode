@@ -31,7 +31,7 @@ export type Request = typeof Request.Type
 export const Reply = Permission.Reply
 export type Reply = typeof Reply.Type
 
-export interface AssertInput extends Omit<Request, "id" | "message"> {
+export interface AssertInput extends Omit<Request, "id" | "message" | "experimental"> {
   readonly id?: ID
   readonly agent?: Agent.ID
 }
@@ -204,9 +204,10 @@ const layer = Layer.effect(
         () => Effect.sync(() => void parents.delete(call)),
       )
 
+    // A nested call shows on its parent's row; `experimental.call` keeps the inner call's own ID.
     function row(source: AssertInput["source"]) {
       const parent = source && parents.get(source.id)
-      return parent ? { ...source, id: parent } : source
+      return parent ? { source: { ...source, id: parent }, experimental: { call: source.id } } : { source }
     }
 
     const evaluateInput = Effect.fnUntraced(function* (input: AssertInput) {
@@ -221,7 +222,7 @@ const layer = Layer.effect(
         action: input.action,
         resources: input.resources,
         metadata: input.metadata,
-        source: row(input.source),
+        ...row(input.source),
         effect,
       })
       const unattended = yield* Unattended
@@ -249,7 +250,7 @@ const layer = Layer.effect(
         metadata:
           input.metadata &&
           Object.fromEntries(Object.entries(input.metadata).filter(([, value]) => value !== undefined)),
-        source: row(input.source),
+        ...row(input.source),
         message,
       }
     }

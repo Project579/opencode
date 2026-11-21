@@ -844,6 +844,7 @@ export type PermissionRequest = {
   metadata?: { [x: string]: JsonValue }
   source?: PermissionSource
   message?: string
+  experimental?: { call?: string }
 }
 
 export type PermissionSavedInfo = {
@@ -1888,6 +1889,7 @@ export type PermissionAsked = {
     metadata?: { [x: string]: any }
     source?: PermissionSource
     message?: string
+    experimental?: { call?: string }
   }
 }
 
