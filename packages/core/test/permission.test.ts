@@ -565,14 +565,52 @@ describe("Permission", () => {
     Effect.gen(function* () {
       yield* setup()
       const service = yield* Permission.Service
+      const hooks = yield* PluginHooks.Service
+      const bus = yield* Bus.Service
+      const evaluated: Array<{ source?: Permission.Source; experimental?: Permission.Request["experimental"] }> = []
+      yield* hooks.register("permission", "evaluate", (event) =>
+        Effect.sync(() => void evaluated.push({ source: event.source, experimental: event.experimental })),
+      )
+      const asked: Array<Permission.Request> = []
+      yield* bus.listen((event) =>
+        event.type === Permission.Event.Asked.type
+          ? Effect.sync(() => void asked.push(event.data as Permission.Request))
+          : Effect.void,
+      )
       const source = { type: "tool" as const, messageID: "msg_test", id: "call_child" }
-      const ask = (id: string) => service.ask(assertion({ id: Permission.ID.create(id), source }))
+      const ask = (id: string, input: Partial<Permission.AssertInput> = { source }) =>
+        service.ask(assertion({ id: Permission.ID.create(id), ...input }))
       yield* service
         .nested(Tool.CallID.make("call_child"), Tool.CallID.make("call_parent"))
         .pipe(Effect.andThen(ask("per_nested")), Effect.scoped)
       yield* ask("per_after")
-      expect((yield* service.get(Permission.ID.create("per_nested")))?.source).toEqual({ ...source, id: "call_parent" })
-      expect((yield* service.get(Permission.ID.create("per_after")))?.source).toEqual(source)
+      yield* ask("per_plain", {})
+      const stored = (id: string) => service.get(Permission.ID.create(id))
+      expect((yield* stored("per_nested"))?.source).toEqual({ ...source, id: "call_parent" })
+      expect((yield* stored("per_after"))?.source).toEqual(source)
+      expect((yield* stored("per_nested"))?.experimental).toEqual({ call: "call_child" })
+      expect((yield* stored("per_after"))?.experimental).toBeUndefined()
+      expect((yield* stored("per_plain"))?.experimental).toBeUndefined()
+      expect((yield* service.forSession(Session.ID.make("ses_test"))).map((item) => item.experimental)).toEqual([
+        { call: "call_child" },
+        undefined,
+        undefined,
+      ])
+      expect(evaluated.map((item) => item.experimental)).toEqual([{ call: "call_child" }, undefined, undefined])
+      expect(asked.map((item) => item.experimental)).toEqual([{ call: "call_child" }, undefined, undefined])
+    }),
+  )
+
+  it.effect("keeps a nested call's own ID on requests made through assert", () =>
+    Effect.gen(function* () {
+      yield* setup()
+      const source = { type: "tool" as const, messageID: "msg_test", id: "call_child" }
+      const service = yield* Permission.Service
+      const request = yield* service
+        .nested(Tool.CallID.make("call_child"), Tool.CallID.make("call_parent"))
+        .pipe(Effect.andThen(waitForRequest({ source })), Effect.scoped)
+      expect(request.request.source).toEqual({ ...source, id: "call_parent" })
+      expect(request.request.experimental).toEqual({ call: "call_child" })
     }),
   )
 
