@@ -2,6 +2,7 @@ import { isArrayNonEmpty } from "effect/Array"
 import * as NodeSink from "@effect/platform-node/NodeSink"
 import * as NodeStream from "@effect/platform-node/NodeStream"
 import {
+  Context,
   Deferred,
   Effect,
   Exit,
@@ -156,7 +157,12 @@ type Spawned = readonly [
   settle: () => void,
 ]
 
-const makeCrossSpawnSpawner = Effect.gen(function* () {
+/** When `true` in the caller's context, the spawner does not apply its configured wrapper to the command. */
+export const Bypass = Context.Reference<boolean>("@opencode/CrossSpawnSpawner/Bypass", {
+  defaultValue: () => false,
+})
+
+const makeCrossSpawnSpawner = Effect.fnUntraced(function* (wrapper: ReadonlyArray<string>) {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
 
@@ -536,6 +542,11 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
     }
   }
 
+  // Only the launch uses this command, so a failure to start names the wrapper that failed. Kills and exit errors
+  // keep reporting the original, and arguments stay `Redacted` because they move across untouched.
+  const wrapped = (command: ChildProcess.StandardCommand) =>
+    ChildProcess.make(wrapper[0], [...wrapper.slice(1), command.command, ...command.args], command.options)
+
   const spawnCommand: (
     command: ChildProcess.Command,
   ) => Effect.Effect<ChildProcessHandle, PlatformError.PlatformError, Scope.Scope> = Effect.fnUntraced(
@@ -548,6 +559,8 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
               PlatformError.badArgument({ module: "ChildProcess", method: "spawn", description: nul }),
             )
           }
+          // An empty wrapper never reads Bypass, so an unwrapped spawner behaves as before.
+          const launched = wrapper.length > 0 && !(yield* Bypass) ? wrapped(command) : command
           const sin = stdin(command.options)
           const sout = stdio(command.options, "stdout")
           const serr = stdio(command.options, "stderr")
@@ -555,7 +568,7 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
           const dir = yield* cwd(command.options)
 
           const [proc, closed, exited, stopOutput] = yield* Effect.acquireRelease(
-            spawn(command, {
+            spawn(launched, {
               cwd: dir,
               env: env(command.options),
               stdio: stdios(sin, sout, serr, extra),
@@ -684,11 +697,33 @@ const makeCrossSpawnSpawner = Effect.gen(function* () {
   return make(spawnCommand)
 })
 
-const layer: Layer.Layer<ChildProcessSpawner, never, FileSystem.FileSystem | Path.Path> = Layer.effect(
-  ChildProcessSpawner,
-  makeCrossSpawnSpawner,
-)
+const layer = (
+  wrapper: ReadonlyArray<string>,
+): Layer.Layer<ChildProcessSpawner, never, FileSystem.FileSystem | Path.Path> =>
+  Layer.effect(ChildProcessSpawner, makeCrossSpawnSpawner(wrapper))
 
-export const node = makeGlobalNode({ service: ChildProcessSpawner, layer, deps: [filesystem, path] })
+/**
+ * A spawner that starts every command as `wrapper[0] ...wrapper.slice(1) <command> <args>`, so an external tool can
+ * sandbox the processes it starts. `wrapper[0]` is resolved once, here, against this process's `PATH`; throws if it
+ * is not found. An empty or omitted wrapper spawns commands as written.
+ */
+export function configured(options?: { readonly wrapper?: ReadonlyArray<string> }) {
+  const wrapper = options?.wrapper ?? []
+  return makeGlobalNode({
+    service: ChildProcessSpawner,
+    layer: layer(wrapper.length === 0 ? wrapper : [resolveWrapper(wrapper[0]), ...wrapper.slice(1)]),
+    deps: [filesystem, path],
+  })
+}
+
+// A command's own environment, which project config can set, must not be able to put another program first on its
+// `PATH` and so replace the wrapper.
+function resolveWrapper(name: string) {
+  const resolved = name === "" ? null : Bun.which(name)
+  if (resolved) return resolved
+  throw new Error(`experimental.process.wrapper: wrapper command "${name}" not found on PATH`)
+}
+
+export const node = configured()
 
 export * as CrossSpawnSpawner from "./cross-spawn-spawner.js"
